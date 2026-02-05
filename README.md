@@ -13,4 +13,4 @@ Put it on your PATH and use it like `rm`. Or don't put it on your PATH and use i
 
 ## License
 
-Octuply licensed under WTFPL, Unlicense, GLWTPL, SMPPL, Careware, JSON.org's DBE clause, Beerware, and GLWTPL. Because we believe you should take license to take license.
+Octuply licensed under MIT, WTFPL, Unlicense, GLWTPL, Careware, JSON.org's DBE clause, Beerware, and DBAD. Because we believe you should take license to take license.
