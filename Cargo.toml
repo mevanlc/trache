@@ -9,6 +9,8 @@ license = "MIT"
 trash = "5"
 clap = { version = "4", features = ["derive"] }
 chrono = "0.4"
+globset = "0.4"
+regex = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

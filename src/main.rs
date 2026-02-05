@@ -26,6 +26,67 @@ enum PreserveRoot {
     All,
 }
 
+#[derive(Clone, Copy, Default)]
+enum PatternTarget {
+    #[default]
+    Name,
+    Path,
+}
+
+#[allow(dead_code)]
+enum CompiledMatcher {
+    Glob(globset::GlobMatcher),
+    Regex(regex::Regex),
+    Exact(String),
+    Substring(String),
+}
+
+#[allow(dead_code)]
+impl CompiledMatcher {
+    fn is_match(&self, haystack: &str) -> bool {
+        match self {
+            Self::Glob(g) => g.is_match(haystack),
+            Self::Regex(r) => r.is_match(haystack),
+            Self::Exact(s) => haystack == s,
+            Self::Substring(s) => haystack.contains(s.as_str()),
+        }
+    }
+}
+
+fn parse_match_on(s: &str) -> PatternTarget {
+    match s {
+        "name" => PatternTarget::Name,
+        "path" => PatternTarget::Path,
+        _ => {
+            eprintln!("trache: unknown match target: '{s}'");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn compile_matcher(pattern: &str, kind: &str) -> Result<CompiledMatcher, String> {
+    let matcher = match kind {
+        "glob" => {
+            let glob = globset::GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| format!("invalid glob pattern: {e}"))?
+                .compile_matcher();
+            CompiledMatcher::Glob(glob)
+        }
+        "regex" => {
+            let re = regex::Regex::new(pattern)
+                .map_err(|e| format!("invalid regex: {e}"))?;
+            CompiledMatcher::Regex(re)
+        }
+        "string" => CompiledMatcher::Exact(pattern.to_string()),
+        "substring" => CompiledMatcher::Substring(pattern.to_string()),
+        _ => return Err(format!("unknown match type: '{kind}'")),
+    };
+
+    Ok(matcher)
+}
+
 /// Options for trash operations
 struct TrashOptions {
     dir: bool,
@@ -51,7 +112,7 @@ use trash::os_limited::{list, purge_all, restore_all};
 #[derive(Parser)]
 #[command(name = "trache")]
 #[command(version)]
-#[command(about = "Move files to trash and manage trashed items", long_about = None)]
+#[command(about = "Move files to trash. Manage trashed items.", long_about = None)]
 #[command(group(
     ArgGroup::new("mode")
         .args(["list", "empty", "undo", "purge"])
@@ -72,6 +133,30 @@ struct Cli {
     /// Permanently delete items matching pattern from trash
     #[arg(short = 'p', long, value_name = "PATTERN")]
     purge: Option<String>,
+
+    /// PATTERN match type <glob|regex|string|substring>
+    #[arg(
+        short = 'T',
+        long = "match-type",
+        value_name = "TYPE",
+        default_value = "glob",
+        long_help = "Match type for --undo and --purge.\n\
+            TYPE: glob (default), regex, string (exact), substring\n\
+            Glob syntax: https://docs.rs/globset"
+    )]
+    match_type: String,
+
+    /// Match against name (basename) or path
+    #[arg(
+        short = 'M',
+        long = "match-on",
+        value_name = "TARGET",
+        default_value = "name",
+        long_help = "What to match the pattern against.\n\
+            name: file basename (default)\n\
+            path: original full path"
+    )]
+    match_on: String,
 
     // --- rm-compatible flags ---
     /// Remove empty directories
@@ -114,7 +199,7 @@ struct Cli {
     #[arg(short = 'x', long = "one-file-system")]
     one_file_system: bool,
 
-    /// Ignored (for BSD rm compatibility)
+    /// This flag has no effect.  It is kept only for backwards compatibility with 4.4BSD-Lite2.
     #[arg(short = 'P', hide = true)]
     _compat_p: bool,
 
@@ -147,9 +232,21 @@ fn main() {
     } else if cli.empty {
         empty_trash()
     } else if let Some(pattern) = cli.undo {
-        restore_items(&pattern)
+        let matcher = compile_matcher(&pattern, &cli.match_type)
+            .unwrap_or_else(|e| {
+                eprintln!("trache: {e}");
+                std::process::exit(1);
+            });
+        let target = parse_match_on(&cli.match_on);
+        restore_items(&pattern, &matcher, target)
     } else if let Some(pattern) = cli.purge {
-        purge_items(&pattern)
+        let matcher = compile_matcher(&pattern, &cli.match_type)
+            .unwrap_or_else(|e| {
+                eprintln!("trache: {e}");
+                std::process::exit(1);
+            });
+        let target = parse_match_on(&cli.match_on);
+        purge_items(&pattern, &matcher, target)
     } else {
         let interactive = if cli.force {
             InteractiveMode::Never
@@ -464,11 +561,17 @@ fn list_trash() -> Result<(), Box<dyn std::error::Error>> {
     target_os = "windows",
     all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
 ))]
-fn restore_items(pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn restore_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget) -> Result<(), Box<dyn std::error::Error>> {
     let items = list()?;
     let matching: Vec<_> = items
         .into_iter()
-        .filter(|item| item.name.to_string_lossy().contains(pattern))
+        .filter(|item| {
+            let haystack = match target {
+                PatternTarget::Name => item.name.to_string_lossy().into_owned(),
+                PatternTarget::Path => item.original_path().to_string_lossy().into_owned(),
+            };
+            matcher.is_match(&haystack)
+        })
         .collect();
 
     if matching.is_empty() {
@@ -490,7 +593,7 @@ fn restore_items(pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-fn restore_items(_pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn restore_items(_pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget) -> Result<(), Box<dyn std::error::Error>> {
     Err("Restoring from trash is not supported on this platform".into())
 }
 
@@ -498,11 +601,17 @@ fn restore_items(_pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
     target_os = "windows",
     all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
 ))]
-fn purge_items(pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn purge_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget) -> Result<(), Box<dyn std::error::Error>> {
     let items = list()?;
     let matching: Vec<_> = items
         .into_iter()
-        .filter(|item| item.name.to_string_lossy().contains(pattern))
+        .filter(|item| {
+            let haystack = match target {
+                PatternTarget::Name => item.name.to_string_lossy().into_owned(),
+                PatternTarget::Path => item.original_path().to_string_lossy().into_owned(),
+            };
+            matcher.is_match(&haystack)
+        })
         .collect();
 
     if matching.is_empty() {
@@ -520,7 +629,7 @@ fn purge_items(pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-fn purge_items(_pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn purge_items(_pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget) -> Result<(), Box<dyn std::error::Error>> {
     Err("Purging trash is not supported on this platform".into())
 }
 

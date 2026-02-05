@@ -478,7 +478,24 @@ fn test_one_file_system_with_recursive() {
     assert!(!dir.exists());
 }
 
-// Phase 6: Compat flags (no-op)
+// Phase 6: Pattern type and compat flags
+
+#[test]
+fn test_match_type_flag_accepted() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("test.txt");
+    fs::write(&file, "hello").unwrap();
+
+    // -T with a valid match type should be accepted
+    trache()
+        .arg("-T")
+        .arg("glob")
+        .arg(&file)
+        .assert()
+        .success();
+
+    assert!(!file.exists());
+}
 
 #[test]
 fn test_compat_p_flag_ignored() {
@@ -486,7 +503,7 @@ fn test_compat_p_flag_ignored() {
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
-    // -P should be accepted and ignored
+    // -P should be silently ignored (4.4BSD-Lite2 compat)
     trache()
         .arg("-P")
         .arg(&file)
@@ -494,6 +511,24 @@ fn test_compat_p_flag_ignored() {
         .success();
 
     assert!(!file.exists());
+}
+
+#[test]
+fn test_compat_p_flag_combines_with_other_flags() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path().join("mydir");
+    fs::create_dir(&dir).unwrap();
+    let file = dir.join("inner.txt");
+    fs::write(&file, "hello").unwrap();
+
+    // -P combined with -r should still work (P is a no-op)
+    trache()
+        .arg("-rP")
+        .arg(&dir)
+        .assert()
+        .success();
+
+    assert!(!dir.exists());
 }
 
 #[test]
