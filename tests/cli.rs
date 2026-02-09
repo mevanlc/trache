@@ -481,29 +481,12 @@ fn test_one_file_system_with_recursive() {
 // Phase 6: Pattern type and compat flags
 
 #[test]
-fn test_match_type_flag_accepted() {
-    let tmp = TempDir::new().unwrap();
-    let file = tmp.path().join("test.txt");
-    fs::write(&file, "hello").unwrap();
-
-    // -T with a valid match type should be accepted
-    trache()
-        .arg("-T")
-        .arg("glob")
-        .arg(&file)
-        .assert()
-        .success();
-
-    assert!(!file.exists());
-}
-
-#[test]
 fn test_compat_p_flag_ignored() {
     let tmp = TempDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
-    // -P should be silently ignored (4.4BSD-Lite2 compat)
+    // -P should be silently ignored (BSD compat)
     trache()
         .arg("-P")
         .arg(&file)
@@ -543,7 +526,7 @@ fn test_compat_w_flag_errors() {
         .arg(&file)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("use -u/--undo"));
+        .stderr(predicate::str::contains("use --trash-undo"));
 
     assert!(file.exists()); // File should still exist
 }

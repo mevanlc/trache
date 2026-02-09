@@ -36,9 +36,8 @@ enum PatternTarget {
 #[allow(dead_code)]
 enum CompiledMatcher {
     Glob(globset::GlobMatcher),
-    Regex(regex::Regex),
-    Exact(String),
-    Substring(String),
+    Regex(regex::Regex, bool),
+    String(String, bool),
 }
 
 #[allow(dead_code)]
@@ -46,29 +45,84 @@ impl CompiledMatcher {
     fn is_match(&self, haystack: &str) -> bool {
         match self {
             Self::Glob(g) => g.is_match(haystack),
-            Self::Regex(r) => r.is_match(haystack),
-            Self::Exact(s) => haystack == s,
-            Self::Substring(s) => haystack.contains(s.as_str()),
+            Self::Regex(r, full) => {
+                if *full {
+                    r.find(haystack)
+                        .map(|m| m.start() == 0 && m.end() == haystack.len())
+                        .unwrap_or(false)
+                } else {
+                    r.is_match(haystack)
+                }
+            }
+            Self::String(s, full) => {
+                if *full {
+                    haystack == s.as_str()
+                } else {
+                    haystack.contains(s.as_str())
+                }
+            }
         }
     }
 }
 
-fn parse_match_on(s: &str) -> PatternTarget {
-    match s {
-        "name" => PatternTarget::Name,
-        "path" => PatternTarget::Path,
-        _ => {
-            eprintln!("trache: unknown match target: '{s}'");
-            std::process::exit(1);
+struct ParsedPattern<'a> {
+    pattern: &'a str,
+    match_type: &'a str,
+    full: bool,
+    target: PatternTarget,
+}
+
+fn parse_pattern(raw: &str) -> ParsedPattern<'_> {
+    let mut match_type = "glob";
+    let mut full = false;
+    let mut target = PatternTarget::Name;
+    let mut rest = raw;
+
+    loop {
+        if let Some(after) = rest.strip_prefix("glob:") {
+            match_type = "glob";
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("regex:") {
+            match_type = "regex";
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("string:") {
+            match_type = "string";
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("full:") {
+            full = true;
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("partial:") {
+            full = false;
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("name:") {
+            target = PatternTarget::Name;
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("path:") {
+            target = PatternTarget::Path;
+            rest = after;
+        } else {
+            break;
         }
+    }
+
+    ParsedPattern {
+        pattern: rest,
+        match_type,
+        full,
+        target,
     }
 }
 
-fn compile_matcher(pattern: &str, kind: &str) -> Result<CompiledMatcher, String> {
+fn compile_matcher(pattern: &str, kind: &str, full: bool) -> Result<CompiledMatcher, String> {
     let matcher = match kind {
         "glob" => {
-            let glob = globset::GlobBuilder::new(pattern)
-                .literal_separator(true)
+            let (glob_pattern, literal_sep) = if full {
+                (pattern.to_string(), true)
+            } else {
+                (format!("*{pattern}*"), false)
+            };
+            let glob = globset::GlobBuilder::new(&glob_pattern)
+                .literal_separator(literal_sep)
                 .build()
                 .map_err(|e| format!("invalid glob pattern: {e}"))?
                 .compile_matcher();
@@ -77,10 +131,11 @@ fn compile_matcher(pattern: &str, kind: &str) -> Result<CompiledMatcher, String>
         "regex" => {
             let re = regex::Regex::new(pattern)
                 .map_err(|e| format!("invalid regex: {e}"))?;
-            CompiledMatcher::Regex(re)
+            CompiledMatcher::Regex(re, full)
         }
-        "string" => CompiledMatcher::Exact(pattern.to_string()),
-        "substring" => CompiledMatcher::Substring(pattern.to_string()),
+        "string" => {
+            CompiledMatcher::String(pattern.to_string(), full)
+        }
         _ => return Err(format!("unknown match type: '{kind}'")),
     };
 
@@ -119,44 +174,78 @@ use trash::os_limited::{list, purge_all, restore_all};
 ))]
 struct Cli {
     /// List items in trash
-    #[arg(short = 'l', long)]
+    #[arg(long = "trash-list")]
     list: bool,
 
     /// Empty the entire trash
-    #[arg(short = 'e', long)]
+    #[arg(long = "trash-empty")]
     empty: bool,
 
-    /// Restore items matching pattern from trash
-    #[arg(short = 'u', long, value_name = "PATTERN")]
+    /// Restore items matching pattern from trash (see --help)
+    #[arg(
+        long = "trash-undo",
+        value_name = "PATTERN",
+        long_help = "Restore items matching PATTERN from trash.\n\n\
+            PATTERN may include optional prefixes to control matching:\n\
+            \n\
+            \x20 [glob:|regex:|string:|full:|partial:|name:|path:]*PATTERN\n\
+            \n\
+            Match type (default: glob):\n\
+            \x20 glob:     glob pattern (see https://docs.rs/globset)\n\
+            \x20 regex:    regular expression\n\
+            \x20 string:   literal string\n\
+            \n\
+            Match extent (default: partial):\n\
+            \x20 partial:  pattern matches a substring of the name/path\n\
+            \x20 full:     pattern must match the entire name/path\n\
+            \n\
+            Match target (default: name):\n\
+            \x20 name:  match against file basename\n\
+            \x20 path:  match against original full path\n\
+            \n\
+            Prefixes can be stacked; rightmost wins per group.\n\
+            \n\
+            Examples:\n\
+            \x20 --trash-undo foo            names containing \"foo\"\n\
+            \x20 --trash-undo 'full:*.txt'   names matching *.txt exactly\n\
+            \x20 --trash-undo 'regex:^foo'   names with regex match\n\
+            \x20 --trash-undo 'string:a.txt' names containing \"a.txt\" literally\n\
+            \x20 --trash-undo 'path:/tmp'    paths containing \"/tmp\""
+    )]
     undo: Option<String>,
 
-    /// Permanently delete items matching pattern from trash
-    #[arg(short = 'p', long, value_name = "PATTERN")]
+    /// Permanently delete items matching pattern from trash (see --help)
+    #[arg(
+        long = "trash-purge",
+        value_name = "PATTERN",
+        long_help = "Permanently delete items matching PATTERN from trash.\n\n\
+            PATTERN may include optional prefixes to control matching:\n\
+            \n\
+            \x20 [glob:|regex:|string:|full:|partial:|name:|path:]*PATTERN\n\
+            \n\
+            Match type (default: glob):\n\
+            \x20 glob:     glob pattern (see https://docs.rs/globset)\n\
+            \x20 regex:    regular expression\n\
+            \x20 string:   literal string\n\
+            \n\
+            Match extent (default: partial):\n\
+            \x20 partial:  pattern matches a substring of the name/path\n\
+            \x20 full:     pattern must match the entire name/path\n\
+            \n\
+            Match target (default: name):\n\
+            \x20 name:  match against file basename\n\
+            \x20 path:  match against original full path\n\
+            \n\
+            Prefixes can be stacked; rightmost wins per group.\n\
+            \n\
+            Examples:\n\
+            \x20 --trash-purge foo            names containing \"foo\"\n\
+            \x20 --trash-purge 'full:*.txt'   names matching *.txt exactly\n\
+            \x20 --trash-purge 'regex:^foo'   names with regex match\n\
+            \x20 --trash-purge 'string:a.txt' names containing \"a.txt\" literally\n\
+            \x20 --trash-purge 'path:/tmp'    paths containing \"/tmp\""
+    )]
     purge: Option<String>,
-
-    /// PATTERN match type <glob|regex|string|substring>
-    #[arg(
-        short = 'T',
-        long = "match-type",
-        value_name = "TYPE",
-        default_value = "glob",
-        long_help = "Match type for --undo and --purge.\n\
-            TYPE: glob (default), regex, string (exact), substring\n\
-            Glob syntax: https://docs.rs/globset"
-    )]
-    match_type: String,
-
-    /// Match against name (basename) or path
-    #[arg(
-        short = 'M',
-        long = "match-on",
-        value_name = "TARGET",
-        default_value = "name",
-        long_help = "What to match the pattern against.\n\
-            name: file basename (default)\n\
-            path: original full path"
-    )]
-    match_on: String,
 
     // --- rm-compatible flags ---
     /// Remove empty directories
@@ -199,11 +288,11 @@ struct Cli {
     #[arg(short = 'x', long = "one-file-system")]
     one_file_system: bool,
 
-    /// This flag has no effect.  It is kept only for backwards compatibility with 4.4BSD-Lite2.
+    /// This flag has no effect.  It is kept only for backwards compatibility with BSD.
     #[arg(short = 'P', hide = true)]
     _compat_p: bool,
 
-    /// Unsupported (use -u/--undo instead)
+    /// Unsupported (use --trash-undo instead)
     #[arg(short = 'W', hide = true)]
     compat_w: bool,
 
@@ -223,7 +312,7 @@ fn main() {
     let cli = Cli::parse();
 
     if cli.compat_w {
-        eprintln!("trache: -W is not supported; use -u/--undo <pattern> to restore from trash");
+        eprintln!("trache: -W is not supported; use --trash-undo <pattern> to restore from trash");
         std::process::exit(1);
     }
 
@@ -231,22 +320,22 @@ fn main() {
         list_trash()
     } else if cli.empty {
         empty_trash()
-    } else if let Some(pattern) = cli.undo {
-        let matcher = compile_matcher(&pattern, &cli.match_type)
+    } else if let Some(ref raw) = cli.undo {
+        let parsed = parse_pattern(raw);
+        let matcher = compile_matcher(parsed.pattern, parsed.match_type, parsed.full)
             .unwrap_or_else(|e| {
                 eprintln!("trache: {e}");
                 std::process::exit(1);
             });
-        let target = parse_match_on(&cli.match_on);
-        restore_items(&pattern, &matcher, target)
-    } else if let Some(pattern) = cli.purge {
-        let matcher = compile_matcher(&pattern, &cli.match_type)
+        restore_items(parsed.pattern, &matcher, parsed.target)
+    } else if let Some(ref raw) = cli.purge {
+        let parsed = parse_pattern(raw);
+        let matcher = compile_matcher(parsed.pattern, parsed.match_type, parsed.full)
             .unwrap_or_else(|e| {
                 eprintln!("trache: {e}");
                 std::process::exit(1);
             });
-        let target = parse_match_on(&cli.match_on);
-        purge_items(&pattern, &matcher, target)
+        purge_items(parsed.pattern, &matcher, parsed.target)
     } else {
         let interactive = if cli.force {
             InteractiveMode::Never
@@ -651,7 +740,21 @@ fn empty_trash() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(target_os = "macos")]
+fn empty_trash() -> Result<(), Box<dyn std::error::Error>> {
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"Finder\" to empty trash")
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("osascript failed: {stderr}").into());
+    }
+    println!("Trash emptied.");
+    Ok(())
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
 fn empty_trash() -> Result<(), Box<dyn std::error::Error>> {
     Err("Emptying trash is not supported on this platform".into())
 }

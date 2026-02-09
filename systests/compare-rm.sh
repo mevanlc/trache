@@ -27,7 +27,7 @@ cleanup() {
     cd /
     rm -rf "$TESTDIR"
     # Empty trash for clean state
-    "$TRACHE" --empty 2>/dev/null || true
+    "$TRACHE" --trash-empty 2>/dev/null || true
 }
 
 trap cleanup EXIT
@@ -48,7 +48,7 @@ setup
 echo "Test 2: Undo/restore"
 echo "restore me" > restore.txt
 "$TRACHE" restore.txt
-"$TRACHE" --undo restore
+"$TRACHE" --trash-undo restore
 [ -f restore.txt ] && pass "file restored" || fail "file not restored"
 [ "$(cat restore.txt)" = "restore me" ] && pass "content intact" || fail "content changed"
 
@@ -121,24 +121,24 @@ setup
 echo "Test 12: List trash"
 echo "listme" > listme.txt
 "$TRACHE" listme.txt
-"$TRACHE" --list | grep -q "listme" && pass "shows in list" || fail "not in list"
+"$TRACHE" --trash-list | grep -q "listme" && pass "shows in list" || fail "not in list"
 
 # Test 13: Purge from trash
 setup
 echo "Test 13: Purge specific item"
 echo "purgeme" > purgeme.txt
 "$TRACHE" purgeme.txt
-"$TRACHE" --purge purgeme
-"$TRACHE" --list | grep -q "purgeme" && fail "still in trash" || pass "purged"
+"$TRACHE" --trash-purge purgeme
+"$TRACHE" --trash-list | grep -q "purgeme" && fail "still in trash" || pass "purged"
 
 # Test 14: Empty trash
 setup
 echo "Test 14: Empty trash"
 touch trash1.txt trash2.txt
 "$TRACHE" trash1.txt trash2.txt
-"$TRACHE" --empty
-count=$("$TRACHE" --list 2>&1 | grep -c "trash" || echo "0")
-[ "$count" = "0" ] || "$TRACHE" --list | grep -q "empty" && pass "trash emptied" || fail "trash not empty"
+"$TRACHE" --trash-empty
+count=$("$TRACHE" --trash-list 2>&1 | grep -c "trash" || echo "0")
+[ "$count" = "0" ] || "$TRACHE" --trash-list | grep -q "empty" && pass "trash emptied" || fail "trash not empty"
 
 echo ""
 echo "=== All tests passed ==="
