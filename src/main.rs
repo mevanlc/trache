@@ -1,8 +1,19 @@
+mod interact;
+
 use std::fs;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
 use clap::{ArgGroup, Parser, ValueEnum};
+use interact::prompt_yes;
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+use interact::{
+    prompt_collision, prompt_selection, prompt_twins, untrash_name, find_untrash_range,
+    format_untrash_range, collision_choice_name, CollisionChoice, TwinChoice, TwinInfo,
+};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 enum InteractiveMode {
@@ -323,6 +334,21 @@ fn main() {
 
     let dry_run = cli.dry_run;
 
+    let interactive = if cli.force {
+        InteractiveMode::Never
+    } else if cli.prompt_always {
+        InteractiveMode::Always
+    } else if cli.prompt_once {
+        InteractiveMode::Once
+    } else if let Some(mode) = cli.interactive {
+        mode
+    } else {
+        InteractiveMode::Never
+    };
+
+    let stdin = io::stdin();
+    let mut input = stdin.lock();
+
     let result = if cli.list {
         list_trash()
     } else if cli.empty {
@@ -339,7 +365,7 @@ fn main() {
                 eprintln!("trache: {e}");
                 std::process::exit(1);
             });
-        restore_items(parsed.pattern, &matcher, parsed.target, dry_run)
+        restore_items(&mut input, parsed.pattern, &matcher, parsed.target, dry_run, interactive)
     } else if let Some(ref raw) = cli.purge {
         let parsed = parse_pattern(raw);
         let matcher = compile_matcher(parsed.pattern, parsed.match_type, parsed.full)
@@ -349,18 +375,6 @@ fn main() {
             });
         purge_items(parsed.pattern, &matcher, parsed.target, dry_run)
     } else {
-        let interactive = if cli.force {
-            InteractiveMode::Never
-        } else if cli.prompt_always {
-            InteractiveMode::Always
-        } else if cli.prompt_once {
-            InteractiveMode::Once
-        } else if let Some(mode) = cli.interactive {
-            mode
-        } else {
-            InteractiveMode::Never
-        };
-
         let preserve_root = if cli.no_preserve_root {
             PreserveRoot::No
         } else if let Some(mode) = cli.preserve_root {
@@ -380,7 +394,7 @@ fn main() {
             one_file_system: cli.one_file_system,
         };
 
-        trash_files(&cli.files, &opts)
+        trash_files(&mut input, &cli.files, &opts)
     };
 
     if let Err(e) = result {
@@ -389,7 +403,7 @@ fn main() {
     }
 }
 
-fn trash_files(files: &[PathBuf], opts: &TrashOptions) -> Result<(), Box<dyn std::error::Error>> {
+fn trash_files(input: &mut dyn BufRead, files: &[PathBuf], opts: &TrashOptions) -> Result<(), Box<dyn std::error::Error>> {
     // Check -x/--one-file-system support on this platform
     #[cfg(not(unix))]
     if opts.one_file_system {
@@ -408,7 +422,7 @@ fn trash_files(files: &[PathBuf], opts: &TrashOptions) -> Result<(), Box<dyn std
         } else {
             format!("trache: remove {} argument(s)? ", files.len())
         };
-        if !prompt_yes(&msg) {
+        if !prompt_yes(input, &msg) {
             return Ok(());
         }
     }
@@ -441,7 +455,7 @@ fn trash_files(files: &[PathBuf], opts: &TrashOptions) -> Result<(), Box<dyn std
             continue;
         }
 
-        if let Err(e) = trash_single(file, opts, prompt_once_triggered)
+        if let Err(e) = trash_single(input, file, opts, prompt_once_triggered)
             && (!opts.force || file.symlink_metadata().is_ok())
         {
             eprintln!("trache: cannot remove '{}': {}", file.display(), e);
@@ -457,6 +471,7 @@ fn trash_files(files: &[PathBuf], opts: &TrashOptions) -> Result<(), Box<dyn std
 }
 
 fn trash_single(
+    input: &mut dyn BufRead,
     file: &PathBuf,
     opts: &TrashOptions,
     already_prompted: bool,
@@ -479,7 +494,7 @@ fn trash_single(
             if should_prompt {
                 let prompt =
                     format!("trache: remove directory '{}' recursively? ", file.display());
-                if !prompt_yes(&prompt) {
+                if !prompt_yes(input, &prompt) {
                     return Ok(());
                 }
             }
@@ -495,7 +510,7 @@ fn trash_single(
             if is_dir_empty(file)? {
                 if should_prompt {
                     let prompt = format!("trache: remove directory '{}'? ", file.display());
-                    if !prompt_yes(&prompt) {
+                    if !prompt_yes(input, &prompt) {
                         return Ok(());
                     }
                 }
@@ -521,7 +536,7 @@ fn trash_single(
                 "regular file"
             };
             let prompt = format!("trache: remove {} '{}'? ", file_type, file.display());
-            if !prompt_yes(&prompt) {
+            if !prompt_yes(input, &prompt) {
                 return Ok(());
             }
         }
@@ -540,20 +555,6 @@ fn trash_single(
 
 fn is_dir_empty(path: &PathBuf) -> Result<bool, Box<dyn std::error::Error>> {
     Ok(fs::read_dir(path)?.next().is_none())
-}
-
-fn prompt_yes(prompt: &str) -> bool {
-    eprint!("{}", prompt);
-    io::stderr().flush().ok();
-
-    let stdin = io::stdin();
-    let mut line = String::new();
-    if stdin.lock().read_line(&mut line).is_err() {
-        return false;
-    }
-
-    let response = line.trim().to_lowercase();
-    matches!(response.as_str(), "y" | "yes")
 }
 
 fn check_preserve_root(path: &Path, mode: PreserveRoot) -> Result<(), String> {
@@ -719,7 +720,7 @@ fn print_items(items: &[trash::TrashItem], prefix: &str) {
     target_os = "windows",
     all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
 ))]
-fn restore_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn restore_items(input: &mut dyn BufRead, pattern: &str, matcher: &CompiledMatcher, target: PatternTarget, dry_run: bool, interactive: InteractiveMode) -> Result<(), Box<dyn std::error::Error>> {
     let items = list()?;
     let matching: Vec<_> = items
         .into_iter()
@@ -737,18 +738,322 @@ fn restore_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget
         return Ok(());
     }
 
-    let prefix = if dry_run { "would restore" } else { "Restoring" };
-    print_items(&matching, prefix);
+    if interactive == InteractiveMode::Never {
+        let prefix = if dry_run { "would restore" } else { "Restoring" };
+        print_items(&matching, prefix);
 
-    if !dry_run {
-        restore_all(matching)?;
-        println!("Restored item(s).");
+        if !dry_run {
+            restore_all(matching)?;
+            println!("Restored item(s).");
+        }
+        return Ok(());
+    }
+
+    restore_items_interactive(input, matching, dry_run, interactive)
+}
+
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+fn temp_path(path: &Path) -> PathBuf {
+    let pid = std::process::id();
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let parent = path.parent().unwrap_or(Path::new(""));
+    parent.join(format!(".trache_tmp_{pid}_{name}"))
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+fn restore_one_as(item: trash::TrashItem, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let original = item.original_path();
+
+    if *target == *original && !target.exists() {
+        restore_all(vec![item])?;
+        return Ok(());
+    }
+
+    let occupied = original.exists();
+    let tmp = if occupied {
+        let t = temp_path(&original);
+        fs::rename(&original, &t)?;
+        Some(t)
+    } else {
+        None
+    };
+
+    // Restore to original path (now free)
+    if let Err(e) = restore_all(vec![item]) {
+        if let Some(ref t) = tmp {
+            let _ = fs::rename(t, &original);
+        }
+        return Err(e.into());
+    }
+
+    // Rename restored file to target
+    if let Err(e) = fs::rename(&original, target) {
+        if let Some(ref t) = tmp {
+            eprintln!("warning: could not rename restored file, original file left at {}", t.display());
+        }
+        return Err(e.into());
+    }
+
+    // Put existing file back at original path
+    if let Some(ref t) = tmp {
+        fs::rename(t, &original)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+fn handle_collision(
+    input: &mut dyn BufRead,
+    item: trash::TrashItem,
+    path: &Path,
+    dry_run: bool,
+    once: bool,
+    remembered_collision: &mut Option<CollisionChoice>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let choice = if let Some(c) = *remembered_collision {
+        eprintln!("{} already exists \u{2192} {} (remembered)", path.display(), collision_choice_name(c));
+        c
+    } else {
+        let f = find_untrash_range(path, 1);
+        let keep_name = untrash_name(path, f);
+        let c = prompt_collision(input, path, &keep_name, once);
+        if once && c != CollisionChoice::Quit {
+            *remembered_collision = Some(c);
+        }
+        c
+    };
+
+    if dry_run {
+        match choice {
+            CollisionChoice::Overwrite => println!("would overwrite: {}", path.display()),
+            CollisionChoice::KeepBoth => {
+                let f = find_untrash_range(path, 1);
+                println!("would restore as: {}", untrash_name(path, f).display());
+            }
+            CollisionChoice::None => {}
+            CollisionChoice::Quit => std::process::exit(0),
+        }
+        return Ok(());
+    }
+
+    match choice {
+        CollisionChoice::Quit => std::process::exit(0),
+        CollisionChoice::None => {}
+        CollisionChoice::Overwrite => {
+            if path.is_dir() {
+                fs::remove_dir_all(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+            restore_all(vec![item])?;
+            println!("Overwritten: {}", path.display());
+        }
+        CollisionChoice::KeepBoth => {
+            let f = find_untrash_range(path, 1);
+            let target = untrash_name(path, f);
+            restore_one_as(item, &target)?;
+            println!("Restored as: {}", target.display());
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+fn restore_twins_renamed(
+    twins: Vec<trash::TrashItem>,
+    path: &Path,
+    start: usize,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (i, twin) in twins.into_iter().enumerate() {
+        let n = start + i;
+        let target = untrash_name(path, n);
+        if dry_run {
+            println!("would restore as: {}", target.display());
+        } else {
+            restore_one_as(twin, &target)?;
+            println!("Restored as: {}", target.display());
+        }
     }
     Ok(())
 }
 
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+fn handle_twin_selected(
+    input: &mut dyn BufRead,
+    selections: Vec<usize>,
+    twins: Vec<trash::TrashItem>,
+    path: &Path,
+    dry_run: bool,
+    once: bool,
+    remembered_collision: &mut Option<CollisionChoice>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let selected: Vec<trash::TrashItem> = selections
+        .iter()
+        .map(|&i| twins[i - 1].clone())
+        .collect();
+
+    if selected.len() > 1 {
+        let start = find_untrash_range(path, selected.len());
+        restore_twins_renamed(selected, path, start, dry_run)?;
+    } else {
+        let item = selected.into_iter().next().unwrap();
+        if path.exists() {
+            handle_collision(input, item, path, dry_run, once, remembered_collision)?;
+        } else if dry_run {
+            println!("would restore: {}", path.display());
+        } else {
+            restore_all(vec![item])?;
+            println!("Restored: {}", path.display());
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+fn handle_twin_group(
+    input: &mut dyn BufRead,
+    path: &Path,
+    mut twins: Vec<trash::TrashItem>,
+    dry_run: bool,
+    once: bool,
+    remembered_twin: &mut Option<TwinChoice>,
+    remembered_collision: &mut Option<CollisionChoice>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    twins.sort_by_key(|t| t.time_deleted);
+    let count = twins.len();
+    let start = find_untrash_range(path, count);
+    let end = start + count - 1;
+    let range_desc = format_untrash_range(path, start, end);
+
+    let choice = if let Some(ref remembered) = *remembered_twin {
+        let desc = match remembered {
+            TwinChoice::All => format!("all (remembered): restoring as {range_desc}"),
+            TwinChoice::None => "none (remembered)".to_string(),
+            TwinChoice::Some(_) => "some (remembered)".to_string(),
+            TwinChoice::Quit => unreachable!(),
+        };
+        eprintln!("{} trashed {count} times \u{2192} {desc}", path.display());
+        remembered.clone()
+    } else {
+        let twin_infos: Vec<TwinInfo> = twins
+            .iter()
+            .map(|t| TwinInfo {
+                name: t.name.to_string_lossy().into_owned(),
+                timestamp: format_timestamp(t.time_deleted),
+            })
+            .collect();
+        let c = prompt_twins(input, path, &twin_infos, &range_desc, once);
+        if once && !matches!(c, TwinChoice::Quit) {
+            *remembered_twin = Some(match &c {
+                TwinChoice::Some(_) => TwinChoice::Some(vec![]),
+                other => other.clone(),
+            });
+        }
+        c
+    };
+
+    match choice {
+        TwinChoice::Quit => std::process::exit(0),
+        TwinChoice::None => {}
+        TwinChoice::All => {
+            restore_twins_renamed(twins, path, start, dry_run)?;
+        }
+        TwinChoice::Some(selections) => {
+            if selections.is_empty() {
+                // Remembered "some" — re-prompt for selection
+                for (i, twin) in twins.iter().enumerate() {
+                    let ts = format_timestamp(twin.time_deleted);
+                    eprintln!("  {}: {} ({})", i + 1, twin.name.to_string_lossy(), ts);
+                }
+                if let Some(sel) = prompt_selection(input, count) {
+                    handle_twin_selected(input, sel, twins, path, dry_run, once, remembered_collision)?;
+                }
+            } else {
+                handle_twin_selected(input, selections, twins, path, dry_run, once, remembered_collision)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+fn restore_items_interactive(
+    input: &mut dyn BufRead,
+    matching: Vec<trash::TrashItem>,
+    dry_run: bool,
+    interactive: InteractiveMode,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut groups: std::collections::HashMap<PathBuf, Vec<trash::TrashItem>> =
+        std::collections::HashMap::new();
+    for item in matching {
+        groups.entry(item.original_path()).or_default().push(item);
+    }
+
+    let mut twin_groups: Vec<(PathBuf, Vec<trash::TrashItem>)> = Vec::new();
+    let mut singletons: Vec<trash::TrashItem> = Vec::new();
+    for (path, items) in groups {
+        if items.len() > 1 {
+            twin_groups.push((path, items));
+        } else {
+            singletons.extend(items);
+        }
+    }
+
+    twin_groups.sort_by(|a, b| a.0.cmp(&b.0));
+    singletons.sort_by(|a, b| a.original_path().cmp(&b.original_path()));
+
+    let once = interactive == InteractiveMode::Once;
+    let mut remembered_twin: Option<TwinChoice> = None;
+    let mut remembered_collision: Option<CollisionChoice> = None;
+
+    for (path, twins) in twin_groups {
+        handle_twin_group(input, &path, twins, dry_run, once, &mut remembered_twin, &mut remembered_collision)?;
+    }
+
+    for item in singletons {
+        let path = item.original_path();
+        if path.exists() {
+            handle_collision(input, item, &path, dry_run, once, &mut remembered_collision)?;
+        } else if dry_run {
+            println!("would restore: {}", path.display());
+        } else {
+            restore_all(vec![item])?;
+            println!("Restored: {}", path.display());
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-fn restore_items(_pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget, _dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn restore_items(_input: &mut dyn BufRead, _pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget, _dry_run: bool, _interactive: InteractiveMode) -> Result<(), Box<dyn std::error::Error>> {
     Err("Restoring from trash is not supported on this platform".into())
 }
 
@@ -825,3 +1130,4 @@ fn empty_trash() -> Result<(), Box<dyn std::error::Error>> {
 fn empty_trash() -> Result<(), Box<dyn std::error::Error>> {
     Err("Emptying trash is not supported on this platform".into())
 }
+

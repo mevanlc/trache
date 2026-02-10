@@ -569,6 +569,262 @@ fn test_double_dash_separator() {
     assert!(!file.exists());
 }
 
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_interactive_with_trash_undo_flag_accepted() {
+    // -i combined with --trash-undo should parse without error
+    // (will find no matching items, but the flag combination is valid)
+    trache()
+        .arg("-i")
+        .arg("--trash-undo")
+        .arg("nonexistent_pattern_xyz_12345")
+        .assert()
+        .success();
+}
+
+// Phase 8: Trash management system tests (require real freedesktop trash — Linux/Windows only)
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_list_shows_trashed_item() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("systest_list.txt");
+    fs::write(&file, "hello").unwrap();
+
+    trache().arg(&file).assert().success();
+
+    trache()
+        .arg("--trash-list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("systest_list.txt"));
+
+    // cleanup
+    trache()
+        .arg("--trash-purge")
+        .arg("full:systest_list.txt")
+        .assert()
+        .success();
+}
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_undo_restores_file() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("systest_undo.txt");
+    fs::write(&file, "restore me").unwrap();
+
+    trache().arg(&file).assert().success();
+    assert!(!file.exists());
+
+    trache()
+        .arg("--trash-undo")
+        .arg("full:systest_undo.txt")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Restoring"));
+
+    assert!(file.exists());
+    assert_eq!(fs::read_to_string(&file).unwrap(), "restore me");
+}
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_undo_no_match() {
+    trache()
+        .arg("--trash-undo")
+        .arg("full:nonexistent_xyz_99999.txt")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No items matching"));
+}
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_purge_removes_item() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("systest_purge.txt");
+    fs::write(&file, "delete me").unwrap();
+
+    trache().arg(&file).assert().success();
+
+    trache()
+        .arg("--trash-purge")
+        .arg("full:systest_purge.txt")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Purging"));
+
+    // verify gone from list
+    trache()
+        .arg("--trash-list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("systest_purge.txt").not());
+}
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_dry_run_undo() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("systest_dryrun.txt");
+    fs::write(&file, "hello").unwrap();
+
+    trache().arg(&file).assert().success();
+    assert!(!file.exists());
+
+    trache()
+        .arg("--trash-dry-run")
+        .arg("--trash-undo")
+        .arg("full:systest_dryrun.txt")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would restore"));
+
+    assert!(!file.exists()); // not actually restored
+
+    // cleanup
+    trache()
+        .arg("--trash-purge")
+        .arg("full:systest_dryrun.txt")
+        .assert()
+        .success();
+}
+
+// Interactive undo: collision cases
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_undo_collision_overwrite() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("systest_col_ow.txt");
+    fs::write(&file, "original").unwrap();
+
+    trache().arg(&file).assert().success();
+    fs::write(&file, "blocker").unwrap();
+
+    trache()
+        .arg("-i")
+        .arg("--trash-undo")
+        .arg("full:systest_col_ow.txt")
+        .write_stdin("o\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Overwritten"));
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+}
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_undo_collision_keep_both() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("systest_col_kb.txt");
+    fs::write(&file, "original").unwrap();
+
+    trache().arg(&file).assert().success();
+    fs::write(&file, "blocker").unwrap();
+
+    trache()
+        .arg("-i")
+        .arg("--trash-undo")
+        .arg("full:systest_col_kb.txt")
+        .write_stdin("k\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Restored as"));
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "blocker");
+    let renamed = tmp.path().join("systest_col_kb-untrash_1.txt");
+    assert!(renamed.exists());
+    assert_eq!(fs::read_to_string(&renamed).unwrap(), "original");
+}
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_undo_collision_skip() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("systest_col_skip.txt");
+    fs::write(&file, "original").unwrap();
+
+    trache().arg(&file).assert().success();
+    fs::write(&file, "blocker").unwrap();
+
+    trache()
+        .arg("-i")
+        .arg("--trash-undo")
+        .arg("full:systest_col_skip.txt")
+        .write_stdin("n\n")
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "blocker");
+
+    // cleanup — item still in trash
+    trache()
+        .arg("--trash-purge")
+        .arg("full:systest_col_skip.txt")
+        .assert()
+        .success();
+}
+
+// Interactive undo: twin cases
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_undo_twins_all() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("systest_tw_all.txt");
+
+    fs::write(&file, "v1").unwrap();
+    trache().arg(&file).assert().success();
+    fs::write(&file, "v2").unwrap();
+    trache().arg(&file).assert().success();
+    assert!(!file.exists());
+
+    trache()
+        .arg("-i")
+        .arg("--trash-undo")
+        .arg("full:systest_tw_all.txt")
+        .write_stdin("a\n")
+        .assert()
+        .success();
+
+    let r1 = tmp.path().join("systest_tw_all-untrash_1.txt");
+    let r2 = tmp.path().join("systest_tw_all-untrash_2.txt");
+    assert!(r1.exists());
+    assert!(r2.exists());
+}
+
+#[test]
+#[cfg_attr(target_os = "macos", ignore)]
+fn test_trash_undo_twins_none() {
+    let tmp = TempDir::new().unwrap();
+    let file = tmp.path().join("systest_tw_none.txt");
+
+    fs::write(&file, "v1").unwrap();
+    trache().arg(&file).assert().success();
+    fs::write(&file, "v2").unwrap();
+    trache().arg(&file).assert().success();
+
+    trache()
+        .arg("-i")
+        .arg("--trash-undo")
+        .arg("full:systest_tw_none.txt")
+        .write_stdin("n\n")
+        .assert()
+        .success();
+
+    assert!(!file.exists());
+
+    // cleanup
+    trache()
+        .arg("--trash-purge")
+        .arg("full:systest_tw_none.txt")
+        .assert()
+        .success();
+}
+
 // macOS Finder/AppleScript has permission issues trashing symlinks in temp dirs
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
