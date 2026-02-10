@@ -149,6 +149,7 @@ struct TrashOptions {
     force: bool,
     interactive: InteractiveMode,
     verbose: bool,
+    dry_run: bool,
     preserve_root: PreserveRoot,
     one_file_system: bool,
 }
@@ -247,6 +248,10 @@ struct Cli {
     )]
     purge: Option<String>,
 
+    /// Show what would be done without doing it
+    #[arg(long = "trash-dry-run")]
+    dry_run: bool,
+
     // --- rm-compatible flags ---
     /// Remove empty directories
     #[arg(short = 'd', long = "dir")]
@@ -316,10 +321,17 @@ fn main() {
         std::process::exit(1);
     }
 
+    let dry_run = cli.dry_run;
+
     let result = if cli.list {
         list_trash()
     } else if cli.empty {
-        empty_trash()
+        if dry_run {
+            println!("would empty trash");
+            Ok(())
+        } else {
+            empty_trash()
+        }
     } else if let Some(ref raw) = cli.undo {
         let parsed = parse_pattern(raw);
         let matcher = compile_matcher(parsed.pattern, parsed.match_type, parsed.full)
@@ -327,7 +339,7 @@ fn main() {
                 eprintln!("trache: {e}");
                 std::process::exit(1);
             });
-        restore_items(parsed.pattern, &matcher, parsed.target)
+        restore_items(parsed.pattern, &matcher, parsed.target, dry_run)
     } else if let Some(ref raw) = cli.purge {
         let parsed = parse_pattern(raw);
         let matcher = compile_matcher(parsed.pattern, parsed.match_type, parsed.full)
@@ -335,7 +347,7 @@ fn main() {
                 eprintln!("trache: {e}");
                 std::process::exit(1);
             });
-        purge_items(parsed.pattern, &matcher, parsed.target)
+        purge_items(parsed.pattern, &matcher, parsed.target, dry_run)
     } else {
         let interactive = if cli.force {
             InteractiveMode::Never
@@ -363,6 +375,7 @@ fn main() {
             force: cli.force,
             interactive,
             verbose: cli.verbose,
+            dry_run: cli.dry_run,
             preserve_root,
             one_file_system: cli.one_file_system,
         };
@@ -470,9 +483,13 @@ fn trash_single(
                     return Ok(());
                 }
             }
-            trash::delete(file)?;
-            if opts.verbose {
-                println!("trashed '{}'", file.display());
+            if opts.dry_run {
+                println!("would trash '{}'", file.display());
+            } else {
+                trash::delete(file)?;
+                if opts.verbose {
+                    println!("trashed '{}'", file.display());
+                }
             }
         } else if opts.dir {
             if is_dir_empty(file)? {
@@ -482,9 +499,13 @@ fn trash_single(
                         return Ok(());
                     }
                 }
-                trash::delete(file)?;
-                if opts.verbose {
-                    println!("trashed '{}'", file.display());
+                if opts.dry_run {
+                    println!("would trash '{}'", file.display());
+                } else {
+                    trash::delete(file)?;
+                    if opts.verbose {
+                        println!("trashed '{}'", file.display());
+                    }
                 }
             } else {
                 return Err("Directory not empty".into());
@@ -504,9 +525,13 @@ fn trash_single(
                 return Ok(());
             }
         }
-        trash::delete(file)?;
-        if opts.verbose {
-            println!("trashed '{}'", file.display());
+        if opts.dry_run {
+            println!("would trash '{}'", file.display());
+        } else {
+            trash::delete(file)?;
+            if opts.verbose {
+                println!("trashed '{}'", file.display());
+            }
         }
     }
 
@@ -627,10 +652,7 @@ fn list_trash() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     for item in items {
-        let time = DateTime::from_timestamp(item.time_deleted, 0)
-            .map(|t| t.with_timezone(&Local))
-            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_else(|| "????-??-?? ??:??".to_string());
+        let time = format_timestamp(item.time_deleted);
         println!(
             "{} {} {}",
             time,
@@ -650,7 +672,54 @@ fn list_trash() -> Result<(), Box<dyn std::error::Error>> {
     target_os = "windows",
     all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
 ))]
-fn restore_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget) -> Result<(), Box<dyn std::error::Error>> {
+fn format_timestamp(time_deleted: i64) -> String {
+    DateTime::from_timestamp(time_deleted, 0)
+        .map(|t| t.with_timezone(&Local))
+        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "????-??-?? ??:??".to_string())
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+/// Build a map of original_path -> count for duplicate detection.
+fn path_counts(items: &[trash::TrashItem]) -> std::collections::HashMap<PathBuf, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for item in items {
+        *counts.entry(item.original_path()).or_insert(0) += 1;
+    }
+    counts
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+/// Print each item with disambiguation when multiple items share the same original path.
+fn print_items(items: &[trash::TrashItem], prefix: &str) {
+    let counts = path_counts(items);
+    let mut seen: std::collections::HashMap<PathBuf, usize> = std::collections::HashMap::new();
+
+    for item in items {
+        let path = item.original_path();
+        let total = counts[&path];
+        if total > 1 {
+            let idx = seen.entry(path.clone()).or_insert(0);
+            *idx += 1;
+            let ts = format_timestamp(item.time_deleted);
+            println!("{prefix} ({}/{total}, {ts}): {}", *idx, path.display());
+        } else {
+            println!("{prefix}: {}", path.display());
+        }
+    }
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+))]
+fn restore_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     let items = list()?;
     let matching: Vec<_> = items
         .into_iter()
@@ -668,21 +737,18 @@ fn restore_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget
         return Ok(());
     }
 
-    for item in &matching {
-        println!(
-            "Restoring: {} -> {}",
-            item.name.to_string_lossy(),
-            item.original_path().display()
-        );
-    }
+    let prefix = if dry_run { "would restore" } else { "Restoring" };
+    print_items(&matching, prefix);
 
-    restore_all(matching)?;
-    println!("Restored item(s).");
+    if !dry_run {
+        restore_all(matching)?;
+        println!("Restored item(s).");
+    }
     Ok(())
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-fn restore_items(_pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget) -> Result<(), Box<dyn std::error::Error>> {
+fn restore_items(_pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget, _dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     Err("Restoring from trash is not supported on this platform".into())
 }
 
@@ -690,7 +756,7 @@ fn restore_items(_pattern: &str, _matcher: &CompiledMatcher, _target: PatternTar
     target_os = "windows",
     all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
 ))]
-fn purge_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget) -> Result<(), Box<dyn std::error::Error>> {
+fn purge_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     let items = list()?;
     let matching: Vec<_> = items
         .into_iter()
@@ -708,17 +774,18 @@ fn purge_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget) 
         return Ok(());
     }
 
-    for item in &matching {
-        println!("Purging: {}", item.name.to_string_lossy());
-    }
+    let prefix = if dry_run { "would purge" } else { "Purging" };
+    print_items(&matching, prefix);
 
-    purge_all(matching)?;
-    println!("Permanently deleted item(s).");
+    if !dry_run {
+        purge_all(matching)?;
+        println!("Permanently deleted item(s).");
+    }
     Ok(())
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-fn purge_items(_pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget) -> Result<(), Box<dyn std::error::Error>> {
+fn purge_items(_pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget, _dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     Err("Purging trash is not supported on this platform".into())
 }
 
