@@ -222,7 +222,29 @@ struct Cli {
             \x20 --trash-undo 'full:*.txt'   names matching *.txt exactly\n\
             \x20 --trash-undo 'regex:^foo'   names with regex match\n\
             \x20 --trash-undo 'string:a.txt' names containing \"a.txt\" literally\n\
-            \x20 --trash-undo 'path:/tmp'    paths containing \"/tmp\""
+            \x20 --trash-undo 'path:/tmp'    paths containing \"/tmp\"\n\
+            \n\
+            Interactive mode (-i, -I, --interactive):\n\
+            \n\
+            Without interactive flags, matching items restore silently. Items whose\n\
+            original path already exists are skipped.\n\
+            \n\
+            With -i (or --interactive=always), you are prompted for each conflict.\n\
+            With -I (or --interactive=once), the first choice of each type is\n\
+            remembered and applied to all subsequent conflicts of that type.\n\
+            \n\
+            Collision (original path already exists):\n\
+            \x20 (o) Overwrite   replace the existing file\n\
+            \x20 (k) Keep both   restore as <name>-untrash_N.<ext>\n\
+            \x20 (n) None        skip this item\n\
+            \x20 (q) Quit\n\
+            \n\
+            Twins (multiple trashed copies with the same original path):\n\
+            \x20 (a) All    restore all as <name>-untrash_{N..M}.<ext>\n\
+            \x20 (s) Some   select which versions to restore\n\
+            \x20 (l) List   show version details and timestamps\n\
+            \x20 (n) None   skip\n\
+            \x20 (q) Quit"
     )]
     undo: Option<String>,
 
@@ -272,16 +294,34 @@ struct Cli {
     #[arg(short = 'r', visible_short_alias = 'R', long)]
     recursive: bool,
 
-    /// Prompt before every removal
+    /// Prompt before every removal; also prompts during --trash-undo
     #[arg(short = 'i', overrides_with_all = ["force", "prompt_once", "interactive"])]
     prompt_always: bool,
 
-    /// Prompt once before removing more than three files, or when removing recursively
+    /// Prompt once before removing >3 files or recursively; remember first choice during --trash-undo
     #[arg(short = 'I', overrides_with_all = ["force", "prompt_always", "interactive"])]
     prompt_once: bool,
 
-    /// Prompt according to WHEN: never, once, or always
-    #[arg(long = "interactive", value_name = "WHEN", default_missing_value = "always", num_args = 0..=1, overrides_with_all = ["force", "prompt_always", "prompt_once"])]
+    /// Prompt according to WHEN: never, once, or always; also affects --trash-undo (see --help)
+    #[arg(
+        long = "interactive",
+        value_name = "WHEN",
+        default_missing_value = "always",
+        num_args = 0..=1,
+        overrides_with_all = ["force", "prompt_always", "prompt_once"],
+        long_help = "Prompt according to WHEN: never (default), once, or always.\n\n\
+            When trashing files:\n\
+            \x20 always (-i)  prompt before each file\n\
+            \x20 once (-I)    prompt once before >3 files or recursive removal\n\
+            \x20 never        no prompts (default)\n\
+            \n\
+            When restoring (--trash-undo):\n\
+            \x20 always (-i)  prompt at every conflict (collision or twin group)\n\
+            \x20 once (-I)    prompt on first conflict of each type, remember for the rest\n\
+            \x20 never        restore without prompting; skip items whose path already exists\n\
+            \n\
+            -f / --force overrides all interactive flags."
+    )]
     interactive: Option<InteractiveMode>,
 
     /// Ignore nonexistent files, never prompt
