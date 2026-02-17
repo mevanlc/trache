@@ -287,19 +287,19 @@ struct Cli {
 
     // --- rm-compatible flags ---
     /// Remove empty directories
-    #[arg(short = 'd', long = "dir")]
+    #[arg(short = 'd', long = "dir", overrides_with = "dir")]
     dir: bool,
 
     /// Remove directories and their contents recursively
-    #[arg(short = 'r', visible_short_alias = 'R', long)]
+    #[arg(short = 'r', visible_short_alias = 'R', long, overrides_with = "recursive")]
     recursive: bool,
 
     /// Prompt before every removal; also prompts during --trash-undo
-    #[arg(short = 'i', overrides_with_all = ["force", "prompt_once", "interactive"])]
+    #[arg(short = 'i', overrides_with_all = ["force", "prompt_once", "interactive", "prompt_always"])]
     prompt_always: bool,
 
     /// Prompt once before removing >3 files or recursively; remember first choice during --trash-undo
-    #[arg(short = 'I', overrides_with_all = ["force", "prompt_always", "interactive"])]
+    #[arg(short = 'I', overrides_with_all = ["force", "prompt_always", "interactive", "prompt_once"])]
     prompt_once: bool,
 
     /// Prompt according to WHEN: never, once, or always; also affects --trash-undo (see --help)
@@ -308,7 +308,7 @@ struct Cli {
         value_name = "WHEN",
         default_missing_value = "always",
         num_args = 0..=1,
-        overrides_with_all = ["force", "prompt_always", "prompt_once"],
+        overrides_with_all = ["force", "prompt_always", "prompt_once", "interactive"],
         long_help = "Prompt according to WHEN: never (default), once, or always.\n\n\
             When trashing files:\n\
             \x20 always (-i)  prompt before each file\n\
@@ -325,31 +325,31 @@ struct Cli {
     interactive: Option<InteractiveMode>,
 
     /// Ignore nonexistent files, never prompt
-    #[arg(short = 'f', long, overrides_with_all = ["prompt_always", "prompt_once", "interactive"])]
+    #[arg(short = 'f', long, overrides_with_all = ["prompt_always", "prompt_once", "interactive", "force"])]
     force: bool,
 
     /// Explain what is being done
-    #[arg(short = 'v', long)]
+    #[arg(short = 'v', long, overrides_with = "verbose")]
     verbose: bool,
 
     /// Do not remove '/'; 'all' also rejects arguments on separate devices
-    #[arg(long = "preserve-root", value_name = "MODE", default_missing_value = "yes", num_args = 0..=1, overrides_with = "no_preserve_root")]
+    #[arg(long = "preserve-root", value_name = "MODE", default_missing_value = "yes", num_args = 0..=1, overrides_with_all = ["no_preserve_root", "preserve_root"])]
     preserve_root: Option<PreserveRoot>,
 
     /// Do not treat '/' specially
-    #[arg(long = "no-preserve-root", overrides_with = "preserve_root")]
+    #[arg(long = "no-preserve-root", overrides_with_all = ["preserve_root", "no_preserve_root"])]
     no_preserve_root: bool,
 
     /// Skip directories on different file systems
-    #[arg(short = 'x', long = "one-file-system")]
+    #[arg(short = 'x', long = "one-file-system", overrides_with = "one_file_system")]
     one_file_system: bool,
 
     /// This flag has no effect.  It is kept only for backwards compatibility with BSD.
-    #[arg(short = 'P', hide = true)]
+    #[arg(short = 'P', hide = true, overrides_with = "_compat_p")]
     _compat_p: bool,
 
     /// Unsupported (use --trash-undo instead)
-    #[arg(short = 'W', hide = true)]
+    #[arg(short = 'W', hide = true, overrides_with = "compat_w")]
     compat_w: bool,
 
     /// Files to trash
