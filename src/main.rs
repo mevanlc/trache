@@ -14,6 +14,9 @@ use interact::{
     prompt_collision, prompt_selection, prompt_twins, untrash_name, find_untrash_range,
     format_untrash_range, collision_choice_name, CollisionChoice, TwinChoice, TwinInfo,
 };
+use trash::TrashContext;
+#[cfg(target_os = "macos")]
+use trash::macos::TrashContextExtMacos;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 enum InteractiveMode {
@@ -443,6 +446,13 @@ fn main() {
     }
 }
 
+fn new_trash_ctx() -> TrashContext {
+    let mut ctx = TrashContext::new();
+    #[cfg(target_os = "macos")]
+    ctx.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
+    ctx
+}
+
 fn trash_files(input: &mut dyn BufRead, files: &[PathBuf], opts: &TrashOptions) -> Result<(), Box<dyn std::error::Error>> {
     // Check -x/--one-file-system support on this platform
     #[cfg(not(unix))]
@@ -541,7 +551,7 @@ fn trash_single(
             if opts.dry_run {
                 println!("would trash '{}'", file.display());
             } else {
-                trash::delete(file)?;
+                new_trash_ctx().delete(file)?;
                 if opts.verbose {
                     println!("trashed '{}'", file.display());
                 }
@@ -557,7 +567,7 @@ fn trash_single(
                 if opts.dry_run {
                     println!("would trash '{}'", file.display());
                 } else {
-                    trash::delete(file)?;
+                    new_trash_ctx().delete(file)?;
                     if opts.verbose {
                         println!("trashed '{}'", file.display());
                     }
@@ -583,7 +593,7 @@ fn trash_single(
         if opts.dry_run {
             println!("would trash '{}'", file.display());
         } else {
-            trash::delete(file)?;
+            new_trash_ctx().delete(file)?;
             if opts.verbose {
                 println!("trashed '{}'", file.display());
             }
