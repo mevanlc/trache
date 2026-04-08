@@ -319,7 +319,10 @@ fn test_version() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("trache 0.1.0"));
+        .stdout(predicate::str::contains(concat!(
+            "trache ",
+            env!("CARGO_PKG_VERSION")
+        )));
 }
 
 #[test]
