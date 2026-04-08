@@ -6,7 +6,7 @@ description = "A CLI for moving files to trash"
 license = "MIT"
 
 [dependencies]
-trash = "5"
+trash = { path = "trash-patched" }
 clap = { version = "4", features = ["derive"] }
 chrono = "0.4"
 globset = "0.4"

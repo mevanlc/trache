@@ -8,7 +8,7 @@ use clap::{ArgGroup, Parser, ValueEnum};
 use interact::prompt_yes;
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 use interact::{
     prompt_collision, prompt_selection, prompt_twins, untrash_name, find_untrash_range,
@@ -170,12 +170,12 @@ struct TrashOptions {
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 use chrono::{DateTime, Local};
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 use trash::os_limited::{list, purge_all, restore_all};
 
@@ -447,6 +447,7 @@ fn main() {
 }
 
 fn new_trash_ctx() -> TrashContext {
+    #[allow(unused_mut)]
     let mut ctx = TrashContext::new();
     #[cfg(target_os = "macos")]
     ctx.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
@@ -692,7 +693,7 @@ fn check_one_file_system(_path: &Path) -> Result<(), String> {
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn list_trash() -> Result<(), Box<dyn std::error::Error>> {
     let items = list()?;
@@ -714,14 +715,14 @@ fn list_trash() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 fn list_trash() -> Result<(), Box<dyn std::error::Error>> {
     Err("Listing trash is not supported on this platform".into())
 }
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn format_timestamp(time_deleted: i64) -> String {
     DateTime::from_timestamp(time_deleted, 0)
@@ -732,7 +733,7 @@ fn format_timestamp(time_deleted: i64) -> String {
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 /// Build a map of original_path -> count for duplicate detection.
 fn path_counts(items: &[trash::TrashItem]) -> std::collections::HashMap<PathBuf, usize> {
@@ -745,7 +746,7 @@ fn path_counts(items: &[trash::TrashItem]) -> std::collections::HashMap<PathBuf,
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 /// Print each item with disambiguation when multiple items share the same original path.
 fn print_items(items: &[trash::TrashItem], prefix: &str) {
@@ -768,7 +769,7 @@ fn print_items(items: &[trash::TrashItem], prefix: &str) {
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn restore_items(input: &mut dyn BufRead, pattern: &str, matcher: &CompiledMatcher, target: PatternTarget, dry_run: bool, interactive: InteractiveMode) -> Result<(), Box<dyn std::error::Error>> {
     let items = list()?;
@@ -805,7 +806,7 @@ fn restore_items(input: &mut dyn BufRead, pattern: &str, matcher: &CompiledMatch
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn temp_path(path: &Path) -> PathBuf {
     let pid = std::process::id();
@@ -816,7 +817,7 @@ fn temp_path(path: &Path) -> PathBuf {
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn restore_one_as(item: trash::TrashItem, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let original = item.original_path();
@@ -861,7 +862,7 @@ fn restore_one_as(item: trash::TrashItem, target: &Path) -> Result<(), Box<dyn s
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn handle_collision(
     input: &mut dyn BufRead,
@@ -922,7 +923,7 @@ fn handle_collision(
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn restore_twins_renamed(
     twins: Vec<trash::TrashItem>,
@@ -945,7 +946,7 @@ fn restore_twins_renamed(
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn handle_twin_selected(
     input: &mut dyn BufRead,
@@ -981,7 +982,7 @@ fn handle_twin_selected(
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn handle_twin_group(
     input: &mut dyn BufRead,
@@ -1052,7 +1053,7 @@ fn handle_twin_group(
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn restore_items_interactive(
     input: &mut dyn BufRead,
@@ -1102,14 +1103,14 @@ fn restore_items_interactive(
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 fn restore_items(_input: &mut dyn BufRead, _pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget, _dry_run: bool, _interactive: InteractiveMode) -> Result<(), Box<dyn std::error::Error>> {
     Err("Restoring from trash is not supported on this platform".into())
 }
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn purge_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     let items = list()?;
@@ -1139,14 +1140,14 @@ fn purge_items(pattern: &str, matcher: &CompiledMatcher, target: PatternTarget, 
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 fn purge_items(_pattern: &str, _matcher: &CompiledMatcher, _target: PatternTarget, _dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     Err("Purging trash is not supported on this platform".into())
 }
 
 #[cfg(any(
     target_os = "windows",
-    all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 fn empty_trash() -> Result<(), Box<dyn std::error::Error>> {
     let items = list()?;
@@ -1176,7 +1177,7 @@ fn empty_trash() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(target_os = "ios")]
 fn empty_trash() -> Result<(), Box<dyn std::error::Error>> {
     Err("Emptying trash is not supported on this platform".into())
 }
