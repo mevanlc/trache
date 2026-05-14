@@ -1,11 +1,16 @@
 use std::{
-    ffi::OsString,
+    ffi::{CString, OsString},
+    os::raw::c_char,
     path::{Path, PathBuf},
     process::Command,
+    ptr::NonNull,
 };
 
 use log::trace;
-use objc2_foundation::{NSFileManager, NSString, NSURL};
+use objc2::rc::Retained;
+use objc2_foundation::{
+    NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask, NSString, NSURL,
+};
 
 use crate::{into_unknown, Error, TrashContext};
 
@@ -88,15 +93,14 @@ fn delete_using_file_mgr<P: AsRef<Path>>(full_paths: &[P]) -> Result<(), Error> 
     trace!("Starting delete_using_file_mgr");
     let file_mgr = NSFileManager::defaultManager();
     for path in full_paths {
-        let path = path.as_ref().as_os_str().as_encoded_bytes();
-        let path = match std::str::from_utf8(path) {
-            Ok(path_utf8) => NSString::from_str(path_utf8), // utf-8 path, use as is
-            Err(_) => NSString::from_str(&percent_encode(path)), // binary path, %-encode it
-        };
+        let original_path = path.as_ref();
 
-        trace!("Starting fileURLWithPath");
-        let url = NSURL::fileURLWithPath(&path);
-        trace!("Finished fileURLWithPath");
+        trace!("Starting delete_url_for_path");
+        let url = delete_url_for_path(original_path);
+        trace!("Finished delete_url_for_path");
+
+        let trash_check_url = file_url_for_path(trash_availability_check_path(original_path))?;
+        ensure_volume_trash_available(&file_mgr, original_path, &trash_check_url)?;
 
         trace!("Calling trashItemAtURL");
         let res = file_mgr.trashItemAtURL_resultingItemURL_error(&url, None);
@@ -105,13 +109,70 @@ fn delete_using_file_mgr<P: AsRef<Path>>(full_paths: &[P]) -> Result<(), Error> 
         if let Err(err) = res {
             return Err(Error::Unknown {
                 description: format!(
-                    "While deleting '{:?}', `trashItemAtURL` failed: {err}",
-                    &path
+                    "While deleting '{}', `trashItemAtURL` failed: {err}",
+                    original_path.display()
                 ),
             });
         }
     }
     Ok(())
+}
+
+fn delete_url_for_path(path: &Path) -> Retained<NSURL> {
+    let path_bytes = path.as_os_str().as_encoded_bytes();
+    let path = match std::str::from_utf8(path_bytes) {
+        Ok(path_utf8) => NSString::from_str(path_utf8), // utf-8 path, use as is
+        Err(_) => NSString::from_str(&percent_encode(path_bytes)), // binary path, %-encode it
+    };
+
+    NSURL::fileURLWithPath(&path)
+}
+
+fn file_url_for_path(path: &Path) -> Result<Retained<NSURL>, Error> {
+    let c_path = CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| Error::Unknown {
+        description: format!("Path contains an interior nul byte: '{}'", path.display()),
+    })?;
+    let path_ptr =
+        NonNull::new(c_path.as_ptr() as *mut c_char).expect("CString pointer is non-null");
+    let is_dir = path.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+
+    // Foundation copies the filesystem representation while constructing the URL.
+    Ok(unsafe {
+        NSURL::fileURLWithFileSystemRepresentation_isDirectory_relativeToURL(path_ptr, is_dir, None)
+    })
+}
+
+fn trash_availability_check_path(path: &Path) -> &Path {
+    let mut candidate = path;
+    loop {
+        if std::str::from_utf8(candidate.as_os_str().as_encoded_bytes()).is_ok() {
+            return candidate;
+        }
+
+        candidate = match candidate.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => parent,
+            _ => Path::new("/"),
+        };
+    }
+}
+
+fn ensure_volume_trash_available(
+    file_mgr: &NSFileManager,
+    path: &Path,
+    url: &NSURL,
+) -> Result<(), Error> {
+    file_mgr
+        .URLForDirectory_inDomain_appropriateForURL_create_error(
+            NSSearchPathDirectory::TrashDirectory,
+            NSSearchPathDomainMask::UserDomainMask,
+            Some(url),
+            true,
+        )
+        .map(|_| ())
+        .map_err(|err| Error::UnsupportedTrashVolume {
+            path: path.to_path_buf(),
+            reason: format!("{err}"),
+        })
 }
 
 fn delete_using_finder<P: AsRef<Path>>(full_paths: &[P]) -> Result<(), Error> {

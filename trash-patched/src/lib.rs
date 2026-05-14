@@ -145,6 +145,13 @@ pub enum Error {
         description: String,
     },
 
+    /// The target is on a volume where the operating system could not provide a
+    /// usable Trash/Recycle Bin location.
+    UnsupportedTrashVolume {
+        path: PathBuf,
+        reason: String,
+    },
+
     /// **freedesktop only**
     ///
     /// Error coming from file system
@@ -211,7 +218,14 @@ pub enum Error {
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Error during a `trash` operation: {self:?}")
+        match self {
+            Self::UnsupportedTrashVolume { path, reason } => write!(
+                f,
+                "cannot move '{}' to Trash because the containing volume does not provide a usable Trash ({reason})",
+                path.display()
+            ),
+            _ => write!(f, "Error during a `trash` operation: {self:?}"),
+        }
     }
 }
 impl error::Error for Error {

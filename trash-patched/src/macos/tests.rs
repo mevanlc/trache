@@ -1,11 +1,11 @@
 use crate::{
     macos::{percent_encode, DeleteMethod, TrashContextExtMacos},
     tests::{get_unique_name, init_logging},
-    TrashContext,
+    Error, TrashContext,
 };
 use serial_test::serial;
 use std::ffi::OsStr;
-use std::fs::File;
+use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -39,6 +39,24 @@ fn test_delete_with_ns_file_manager() {
     File::create_new(&path).unwrap();
     trash_ctx.delete(&path).unwrap();
     assert!(File::open(&path).is_err());
+}
+
+#[test]
+#[serial]
+fn test_delete_refuses_unusable_volume_trash() {
+    let (_cleanup, tmp) = create_hfs_volume().unwrap();
+    File::create_new(tmp.path().join(".Trashes")).unwrap();
+
+    init_logging();
+    let mut trash_ctx = TrashContext::default();
+    trash_ctx.set_delete_method(DeleteMethod::NsFileManager);
+
+    let path = tmp.path().join(get_unique_name());
+    fs::create_dir(&path).unwrap();
+
+    let err = trash_ctx.delete(&path).unwrap_err();
+    assert!(matches!(err, Error::UnsupportedTrashVolume { .. }));
+    assert!(path.exists());
 }
 
 #[test]
