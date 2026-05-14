@@ -1132,7 +1132,7 @@ fn restore_items_interactive(
     }
 
     twin_groups.sort_by(|a, b| a.0.cmp(&b.0));
-    singletons.sort_by(|a, b| a.original_path().cmp(&b.original_path()));
+    singletons.sort_by_key(|a| a.original_path());
 
     let once = interactive == InteractiveMode::Once;
     let mut remembered_twin: Option<TwinChoice> = None;
