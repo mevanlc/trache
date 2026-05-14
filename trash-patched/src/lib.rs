@@ -64,7 +64,9 @@ pub struct TrashContext {
 }
 impl TrashContext {
     pub const fn new() -> Self {
-        Self { platform_specific: platform::PlatformTrashContext::new() }
+        Self {
+            platform_specific: platform::PlatformTrashContext::new(),
+        }
     }
 
     /// Removes a single file or directory.
@@ -222,7 +224,9 @@ impl error::Error for Error {
     }
 }
 pub fn into_unknown<E: std::fmt::Display>(err: E) -> Error {
-    Error::Unknown { description: format!("{err}") }
+    Error::Unknown {
+        description: format!("{err}"),
+    }
 }
 
 pub(crate) fn canonicalize_paths<I, T>(paths: I) -> Result<Vec<PathBuf>, Error>
@@ -235,18 +239,22 @@ where
         .map(|x| {
             let target_ref = x.as_ref();
             if target_ref.as_os_str().is_empty() {
-                return Err(Error::CanonicalizePath { original: target_ref.to_owned() });
+                return Err(Error::CanonicalizePath {
+                    original: target_ref.to_owned(),
+                });
             }
             let target = if target_ref.is_relative() {
-                let curr_dir = current_dir()
-                    .map_err(|_| Error::CouldNotAccess { target: "[Current working directory]".into() })?;
+                let curr_dir = current_dir().map_err(|_| Error::CouldNotAccess {
+                    target: "[Current working directory]".into(),
+                })?;
                 curr_dir.join(target_ref)
             } else {
                 target_ref.to_owned()
             };
             let parent = target.parent().ok_or(Error::TargetedRoot)?;
-            let canonical_parent =
-                parent.canonicalize().map_err(|_| Error::CanonicalizePath { original: parent.to_owned() })?;
+            let canonical_parent = parent.canonicalize().map_err(|_| Error::CanonicalizePath {
+                original: parent.to_owned(),
+            })?;
             if let Some(file_name) = target.file_name() {
                 Ok(canonical_parent.join(file_name))
             } else {
@@ -537,7 +545,10 @@ pub mod os_limited {
         let mut item_set = HashSet::with_capacity(items.len());
         for item in items.iter() {
             if !item_set.insert(ItemWrapper(item)) {
-                return Err(Error::RestoreTwins { path: item.original_path(), items });
+                return Err(Error::RestoreTwins {
+                    path: item.original_path(),
+                    items,
+                });
             }
         }
         platform::restore_all(items)

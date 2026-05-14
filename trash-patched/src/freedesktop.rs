@@ -63,10 +63,17 @@ impl TrashContext {
 }
 
 pub fn list() -> Result<Vec<TrashItem>, Error> {
-    let EvaluatedTrashFolders { trash_folders, home_error, sorted_mount_points } = eval_trash_folders()?;
+    let EvaluatedTrashFolders {
+        trash_folders,
+        home_error,
+        sorted_mount_points,
+    } = eval_trash_folders()?;
 
     if trash_folders.is_empty() {
-        warn!("No trash folder was found. The error when looking for the 'home trash' was: {:?}", home_error);
+        warn!(
+            "No trash folder was found. The error when looking for the 'home trash' was: {:?}",
+            home_error
+        );
         return Ok(vec![]);
     }
     // List all items from the set of trash folders
@@ -76,7 +83,10 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
         let top_dir = get_first_topdir_containing_path(folder, &sorted_mount_points);
         let info_folder = folder.join("info");
         if !info_folder.is_dir() {
-            warn!("The path {:?} did not point to a directory, skipping this trash folder.", info_folder);
+            warn!(
+                "The path {:?} did not point to a directory, skipping this trash folder.",
+                info_folder
+            );
             continue;
         }
         let read_dir = match std::fs::read_dir(&info_folder) {
@@ -85,7 +95,10 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                 // After all the earlier checks, it's still possible that the directory does not exist at this point (or is not readable)
                 // because another process may have deleted it or modified its access rights in the meantime.
                 // So let's just pring a warning and continue to the rest of the folders
-                warn!("The trash info folder {:?} could not be read. Error was {:?}", info_folder, e);
+                warn!(
+                    "The trash info folder {:?} could not be read. Error was {:?}",
+                    info_folder, e
+                );
                 continue;
             }
         };
@@ -95,7 +108,10 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                 Ok(entry) => entry,
                 Err(e) => {
                     // Another thread or process may have removed that entry by now
-                    debug!("Tried resolving the trash info `DirEntry` but it failed with: '{}'", e);
+                    debug!(
+                        "Tried resolving the trash info `DirEntry` but it failed with: '{}'",
+                        e
+                    );
                     continue;
                 }
             };
@@ -117,7 +133,10 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                 Ok(file) => file,
                 Err(e) => {
                     // Another thread or process may have removed that entry by now
-                    debug!("Tried opening the trash info '{:?}' but failed with: {}", info_path, e);
+                    debug!(
+                        "Tried opening the trash info '{:?}' but failed with: {}",
+                        info_path, e
+                    );
                     continue;
                 }
             };
@@ -152,7 +171,9 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                         }
                     };
                     name = value_path.file_name().map(|name| name.to_owned());
-                    let parent = value_path.parent().expect("Absolute path to trashed item should have a parent");
+                    let parent = value_path
+                        .parent()
+                        .expect("Absolute path to trashed item should have a parent");
                     original_parent = Some(parent.into());
                 } else if key == "DeletionDate" {
                     #[cfg(feature = "chrono")]
@@ -185,7 +206,12 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                     if time_deleted.is_none() {
                         warn!("Could not determine the deletion time of the trash item. (The `DeletionDate` field is probably missing from the info file.) The info file path is: '{:?}'", info_path);
                     }
-                    result.push(TrashItem { id, name, original_parent, time_deleted: time_deleted.unwrap_or(-1) });
+                    result.push(TrashItem {
+                        id,
+                        name,
+                        original_parent,
+                        time_deleted: time_deleted.unwrap_or(-1),
+                    });
                 } else {
                     warn!("Could not determine the original parent folder of the trash item. (The `Path` field is probably missing from the info file.) The info file path is: '{:?}'", info_path);
                 }
@@ -215,7 +241,10 @@ pub fn is_empty() -> Result<bool, Error> {
                 }
             }
             Err(e) => {
-                warn!("The trash files folder {:?} could not be read. Error was {:?}", bin, e);
+                warn!(
+                    "The trash files folder {:?} could not be read. Error was {:?}",
+                    bin, e
+                );
             }
         }
     }
@@ -224,13 +253,19 @@ pub fn is_empty() -> Result<bool, Error> {
 }
 
 pub fn trash_folders() -> Result<HashSet<PathBuf>, Error> {
-    let EvaluatedTrashFolders { trash_folders, home_error, .. } = eval_trash_folders()?;
+    let EvaluatedTrashFolders {
+        trash_folders,
+        home_error,
+        ..
+    } = eval_trash_folders()?;
 
     if trash_folders.is_empty() {
         return match home_error {
             Some(e) => Err(e),
             None => Err(Error::Unknown {
-                description: "Could not find a valid 'home trash' nor valid trashes on other mount points".into(),
+                description:
+                    "Could not find a valid 'home trash' nor valid trashes on other mount points"
+                        .into(),
             }),
         };
     }
@@ -279,7 +314,11 @@ fn eval_trash_folders() -> Result<EvaluatedTrashFolders, Error> {
         .map_err(|(p, e)| fs_error(p, e))?;
     }
 
-    Ok(EvaluatedTrashFolders { trash_folders, home_error, sorted_mount_points })
+    Ok(EvaluatedTrashFolders {
+        trash_folders,
+        home_error,
+        sorted_mount_points,
+    })
 }
 pub fn metadata(item: &TrashItem) -> Result<TrashItemMetadata, Error> {
     // When purging an item the "in-trash" filename must be parsed from the trashinfo filename
@@ -363,7 +402,8 @@ where
         // if it already exists.
         let original_path = item.original_path();
         // Make sure the parent exists so that `create_dir` doesn't faile due to that.
-        std::fs::create_dir_all(&item.original_parent).map_err(|e| fs_error(&item.original_parent, e))?;
+        std::fs::create_dir_all(&item.original_parent)
+            .map_err(|e| fs_error(&item.original_parent, e))?;
         let mut collision = false;
         if file.is_dir() {
             // NOTE create_dir_all succeeds when the path already exist but create_dir
@@ -377,7 +417,11 @@ where
             }
         } else {
             // File or symlink
-            if let Err(e) = OpenOptions::new().create_new(true).write(true).open(&original_path) {
+            if let Err(e) = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&original_path)
+            {
                 if e.kind() == std::io::ErrorKind::AlreadyExists {
                     collision = true;
                 } else {
@@ -387,7 +431,10 @@ where
         }
         if collision {
             let remaining: Vec<_> = std::iter::once(item).chain(iter).collect();
-            return Err(Error::RestoreCollision { path: original_path, remaining_items: remaining });
+            return Err(Error::RestoreCollision {
+                path: original_path,
+                remaining_items: remaining,
+            });
         }
         std::fs::rename(&file, &original_path).map_err(|e| fs_error(&file, e))?;
         std::fs::remove_file(info_file).map_err(|e| fs_error(info_file, e))?;
@@ -424,7 +471,10 @@ fn execute_on_mounted_trash_folders<F: FnMut(PathBuf) -> Result<(), FsError>>(
                 }
             }
         } else {
-            warn!("A Trash folder was found at '{:?}', but it's invalid because it's {:?}", trash_path, validity);
+            warn!(
+                "A Trash folder was found at '{:?}', but it's invalid because it's {:?}",
+                trash_path, validity
+            );
         }
     }
     // See if there's a ".Trash-$UID" directory at the mounted location
@@ -490,7 +540,10 @@ fn move_to_trash(
         info_name.push(&in_trash_name);
         info_name.push(".trashinfo");
         let info_file_path = info_folder.join(&info_name);
-        let info_result = OpenOptions::new().create_new(true).write(true).open(&info_file_path);
+        let info_result = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&info_file_path);
         match info_result {
             Err(error) => {
                 if error.kind() == std::io::ErrorKind::AlreadyExists {
@@ -524,7 +577,10 @@ fn move_to_trash(
         let path = files_folder.join(&in_trash_name);
         match move_items_no_replace(src, &path) {
             Err((path, error)) => {
-                debug!("Failed moving item to the trash (this is usually OK). {:?}", error);
+                debug!(
+                    "Failed moving item to the trash (this is usually OK). {:?}",
+                    error
+                );
                 // Try to delete the info file
                 if let Err(info_err) = std::fs::remove_file(info_file_path) {
                     warn!("Created the trash info file, then failed to move the item to the trash. So far it's OK, but then failed remove the initial info file. There's either a bug in this program or another faulty program is manupulating the Trash. The error was: {:?}", info_err);
@@ -553,14 +609,19 @@ fn move_items_no_replace(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result
     try_creating_placeholders(src, dst)?;
 
     // Try to rename first (fastest option for same filesystem)
-    let Err(e) = std::fs::rename(src, dst) else { return Ok(()) };
+    let Err(e) = std::fs::rename(src, dst) else {
+        return Ok(());
+    };
 
     let needs_cross_device_copy = e.kind() == ErrorKind::CrossesDevices;
     if !needs_cross_device_copy {
         return Err((src.to_owned(), e));
     }
 
-    debug!("Cross-device move detected, falling back to copy+delete for {:?}", src);
+    debug!(
+        "Cross-device move detected, falling back to copy+delete for {:?}",
+        src
+    );
 
     // Copy the file/directory
     if src.is_dir() {
@@ -588,7 +649,11 @@ fn try_creating_placeholders(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Re
         std::fs::create_dir(dst).map_err(|e| (dst.to_owned(), e))?;
     } else {
         // Symlink or file
-        OpenOptions::new().create_new(true).write(true).open(dst).map_err(|e| (dst.to_owned(), e))?;
+        OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(dst)
+            .map_err(|e| (dst.to_owned(), e))?;
     }
     Ok(())
 }
@@ -624,7 +689,10 @@ fn decode_uri_path(path: impl AsRef<Path>) -> PathBuf {
     // Paths may be invalid Unicode on most Unixes so they should be treated as byte strings
     // A higher level crate, such as `url`, can't be used directly since its API intakes valid Rust
     // strings. Thus, the easiest way is to manually decode each segment of the path and recombine.
-    path.as_ref().iter().map(|part| OsString::from_vec(urlencoding::decode_binary(part.as_bytes()).to_vec())).collect()
+    path.as_ref()
+        .iter()
+        .map(|part| OsString::from_vec(urlencoding::decode_binary(part.as_bytes()).to_vec()))
+        .collect()
 }
 
 fn encode_uri_path(path: impl AsRef<Path>) -> String {
@@ -639,12 +707,18 @@ fn encode_uri_path(path: impl AsRef<Path>) -> String {
             if let Component::Normal(part) = component {
                 urlencoding::encode_binary(part.as_bytes()).to_string()
             } else {
-                component.as_os_str().to_str().expect("Path components such as '/' are valid Unicode").to_owned()
+                component
+                    .as_os_str()
+                    .to_str()
+                    .expect("Path components such as '/' are valid Unicode")
+                    .to_owned()
             }
         })
         .collect();
 
-    path.to_str().expect("URL encoded bytes is valid Unicode").to_owned()
+    path.to_str()
+        .expect("URL encoded bytes is valid Unicode")
+        .to_owned()
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -687,7 +761,9 @@ fn home_trash() -> Result<PathBuf, Error> {
             return Ok(home_path.join(".local/share/Trash"));
         }
     }
-    Err(Error::Unknown { description: "Neither the XDG_DATA_HOME nor the HOME environment variable was found".into() })
+    Err(Error::Unknown {
+        description: "Neither the XDG_DATA_HOME nor the HOME environment variable was found".into(),
+    })
 }
 
 fn home_topdir(mnt_points: &[MountPoint]) -> Result<PathBuf, Error> {
@@ -703,12 +779,18 @@ fn home_topdir(mnt_points: &[MountPoint]) -> Result<PathBuf, Error> {
             return Ok(get_first_topdir_containing_path(home_path, mnt_points).to_owned());
         }
     }
-    Err(Error::Unknown { description: "Neither the XDG_DATA_HOME nor the HOME environment variable was found".into() })
+    Err(Error::Unknown {
+        description: "Neither the XDG_DATA_HOME nor the HOME environment variable was found".into(),
+    })
 }
 
 fn get_first_topdir_containing_path<'a>(path: &Path, mnt_points: &'a [MountPoint]) -> &'a Path {
     let root: &'static Path = Path::new("/");
-    mnt_points.iter().map(|mp| mp.mnt_dir.as_path()).find(|mount_path| path.starts_with(mount_path)).unwrap_or(root)
+    mnt_points
+        .iter()
+        .map(|mp| mp.mnt_dir.as_path())
+        .find(|mount_path| path.starts_with(mount_path))
+        .unwrap_or(root)
 }
 
 struct MountPoint {
@@ -748,13 +830,20 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
     //let file;
     let read_arg = CString::new("r").unwrap();
     let mounts_path = CString::new("/proc/mounts").unwrap();
-    let mut file = unsafe { libc::fopen(mounts_path.as_c_str().as_ptr(), read_arg.as_c_str().as_ptr()) };
+    let mut file = unsafe {
+        libc::fopen(
+            mounts_path.as_c_str().as_ptr(),
+            read_arg.as_c_str().as_ptr(),
+        )
+    };
     if file.is_null() {
         let mtab_path = CString::new("/etc/mtab").unwrap();
         file = unsafe { libc::fopen(mtab_path.as_c_str().as_ptr(), read_arg.as_c_str().as_ptr()) };
     }
     if file.is_null() {
-        return Err(Error::Unknown { description: "Neither '/proc/mounts' nor '/etc/mtab' could be opened.".into() });
+        return Err(Error::Unknown {
+            description: "Neither '/proc/mounts' nor '/etc/mtab' could be opened.".into(),
+        });
     }
     defer! { unsafe { libc::fclose(file); } }
     let mut result = Vec::new();
@@ -770,7 +859,10 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
         let mount_point = unsafe {
             MountPoint {
                 mnt_dir: dir.into(),
-                _mnt_fsname: CStr::from_ptr((*mntent).mnt_fsname).to_str().unwrap().into(),
+                _mnt_fsname: CStr::from_ptr((*mntent).mnt_fsname)
+                    .to_str()
+                    .unwrap()
+                    .into(),
                 _mnt_type: CStr::from_ptr((*mntent).mnt_type).to_str().unwrap().into(),
             }
         };
@@ -778,7 +870,9 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
     }
     if result.is_empty() {
         return Err(Error::Unknown {
-            description: "A mount points file could be opened, but the call to `getmntent` returned NULL.".into(),
+            description:
+                "A mount points file could be opened, but the call to `getmntent` returned NULL."
+                    .into(),
         });
     }
     Ok(result)
@@ -788,8 +882,9 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
 fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
     // Android's bionic has getmntent but the Rust libc crate doesn't expose it.
     // Parse /proc/mounts directly instead.
-    let content = std::fs::read_to_string("/proc/mounts")
-        .map_err(|e| Error::Unknown { description: format!("Failed to read /proc/mounts: {e}") })?;
+    let content = std::fs::read_to_string("/proc/mounts").map_err(|e| Error::Unknown {
+        description: format!("Failed to read /proc/mounts: {e}"),
+    })?;
     let mut result = Vec::new();
     for line in content.lines() {
         let mut fields = line.split_whitespace();
@@ -842,7 +937,8 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
     if count < 1 {
         return Ok(Vec::new());
     }
-    let fs_infos: &[libc::statfs] = unsafe { std::slice::from_raw_parts(fs_infos as _, count as _) };
+    let fs_infos: &[libc::statfs] =
+        unsafe { std::slice::from_raw_parts(fs_infos as _, count as _) };
 
     let mut result = Vec::new();
     for fs_info in fs_infos {
@@ -860,8 +956,11 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
         };
         let mount_from = c_buf_to_str(&fs_info.f_mntfromname).unwrap_or_default();
 
-        let mount_point =
-            MountPoint { mnt_dir: mount_to.into(), _mnt_fsname: mount_from.into(), _mnt_type: fs_type.into() };
+        let mount_point = MountPoint {
+            mnt_dir: mount_to.into(),
+            _mnt_fsname: mount_from.into(),
+            _mnt_type: fs_type.into(),
+        };
         result.push(mount_point);
     }
     Ok(result)
@@ -897,7 +996,8 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
     if count < 1 {
         return Ok(Vec::new());
     }
-    let fs_infos: &[libc::statvfs] = unsafe { std::slice::from_raw_parts(fs_infos as _, count as _) };
+    let fs_infos: &[libc::statvfs] =
+        unsafe { std::slice::from_raw_parts(fs_infos as _, count as _) };
 
     let mut result = Vec::new();
     for fs_info in fs_infos {
@@ -915,8 +1015,11 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
         };
         let mount_from = c_buf_to_str(&fs_info.f_mntfromname).unwrap_or_default();
 
-        let mount_point =
-            MountPoint { mnt_dir: mount_to.into(), _mnt_fsname: mount_from.into(), _mnt_type: fs_type.into() };
+        let mount_point = MountPoint {
+            mnt_dir: mount_to.into(),
+            _mnt_fsname: mount_from.into(),
+            _mnt_type: fs_type.into(),
+        };
         result.push(mount_point);
     }
     Ok(result)
@@ -932,7 +1035,9 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
 )))]
 fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
     // On platforms that don't have support yet, return an error
-    Err(Error::Unknown { description: "Mount points cannot be determined on this operating system".into() })
+    Err(Error::Unknown {
+        description: "Mount points cannot be determined on this operating system".into(),
+    })
 }
 
 #[cfg(test)]
@@ -969,7 +1074,9 @@ mod tests {
         let file_name_prefix = get_unique_name();
         let batches: usize = 2;
         let files_per_batch: usize = 3;
-        let names: Vec<OsString> = (0..files_per_batch).map(|i| format!("{}#{}", file_name_prefix, i).into()).collect();
+        let names: Vec<OsString> = (0..files_per_batch)
+            .map(|i| format!("{}#{}", file_name_prefix, i).into())
+            .collect();
         for _ in 0..batches {
             for path in &names {
                 File::create_new(path).unwrap();
@@ -987,7 +1094,11 @@ mod tests {
         let items = list().unwrap();
         let items: HashMap<_, Vec<_>> = items
             .into_iter()
-            .filter(|x| x.name.as_encoded_bytes().starts_with(file_name_prefix.as_bytes()))
+            .filter(|x| {
+                x.name
+                    .as_encoded_bytes()
+                    .starts_with(file_name_prefix.as_bytes())
+            })
             .fold(HashMap::new(), |mut map, x| {
                 match map.entry(x.name.clone()) {
                     Entry::Occupied(mut entry) => {
@@ -1018,8 +1129,13 @@ mod tests {
 
         let file_name_prefix = get_unique_name();
         let file_count = 2;
-        let names: Vec<OsString> = (0..file_count).map(|i| format!("{}#{}", file_name_prefix, i).into()).collect();
-        let symlink_names: Vec<OsString> = names.iter().map(|name| format!("{:?}-symlink", name).into()).collect();
+        let names: Vec<OsString> = (0..file_count)
+            .map(|i| format!("{}#{}", file_name_prefix, i).into())
+            .collect();
+        let symlink_names: Vec<OsString> = names
+            .iter()
+            .map(|name| format!("{:?}-symlink", name).into())
+            .collect();
 
         // Test file symbolic link and directory symbolic link
         File::create_new(&names[0]).unwrap();
@@ -1040,7 +1156,8 @@ mod tests {
             delete(symlink).unwrap();
             let items = list().unwrap();
             let item = items.into_iter().find(|it| it.name == *symlink).unwrap();
-            restore_all([item.clone()]).expect("The broken symbolic link should be restored successfully.");
+            restore_all([item.clone()])
+                .expect("The broken symbolic link should be restored successfully.");
 
             // Delete and Purge it without errors
             delete(symlink).unwrap();
@@ -1053,10 +1170,17 @@ mod tests {
         let fake = format!("/tmp/{}", get_unique_name());
         let path = decode_uri_path(&fake);
 
-        assert_eq!(path.to_str().expect("Path is valid Unicode"), fake, "Decoded path shouldn't be different");
+        assert_eq!(
+            path.to_str().expect("Path is valid Unicode"),
+            fake,
+            "Decoded path shouldn't be different"
+        );
 
         let encoded = encode_uri_path(&path);
-        assert_eq!(encoded, fake, "URL encoded alphanumeric String shouldn't change");
+        assert_eq!(
+            encoded, fake,
+            "URL encoded alphanumeric String shouldn't change"
+        );
     }
 
     #[test]
@@ -1067,7 +1191,10 @@ mod tests {
         let mut bytes = base.into_encoded_bytes();
         bytes.push(168);
         let fake = OsString::from_vec(bytes);
-        assert!(fake.to_str().is_none(), "Invalid Unicode cannot be a Rust String");
+        assert!(
+            fake.to_str().is_none(),
+            "Invalid Unicode cannot be a Rust String"
+        );
 
         let path = decode_uri_path(&fake);
         assert_eq!(path.as_os_str().as_encoded_bytes(), fake.as_encoded_bytes());
@@ -1106,7 +1233,9 @@ mod tests {
 
     /// This is based on the electron library's implementation.
     /// See: https://github.com/electron/electron/blob/34c4c8d5088fa183f56baea28809de6f2a427e02/shell/common/platform_util_linux.cc#L96
-    pub fn delete_all_canonicalized_using_system_program(full_paths: Vec<PathBuf>) -> Result<(), SystemTrashError> {
+    pub fn delete_all_canonicalized_using_system_program(
+        full_paths: Vec<PathBuf>,
+    ) -> Result<(), SystemTrashError> {
         static DEFAULT_TRASH: &str = "gio";
         let trash = {
             // Determine desktop environment and set accordingly.
@@ -1273,5 +1402,8 @@ mod tests {
 }
 
 fn fs_error(path: impl Into<PathBuf>, source: std::io::Error) -> Error {
-    Error::FileSystem { path: path.into(), source }
+    Error::FileSystem {
+        path: path.into(),
+        source,
+    }
 }

@@ -14,17 +14,29 @@ use windows::{
     Win32::System::Com::StructuredStorage::PropVariantToBSTR,
 };
 
-const SCID_ORIGINAL_LOCATION: PROPERTYKEY = PROPERTYKEY { fmtid: PSGUID_DISPLACED, pid: PID_DISPLACED_FROM };
-const SCID_DATE_DELETED: PROPERTYKEY = PROPERTYKEY { fmtid: PSGUID_DISPLACED, pid: PID_DISPLACED_DATE };
+const SCID_ORIGINAL_LOCATION: PROPERTYKEY = PROPERTYKEY {
+    fmtid: PSGUID_DISPLACED,
+    pid: PID_DISPLACED_FROM,
+};
+const SCID_DATE_DELETED: PROPERTYKEY = PROPERTYKEY {
+    fmtid: PSGUID_DISPLACED,
+    pid: PID_DISPLACED_DATE,
+};
 
 impl From<windows::core::Error> for Error {
     fn from(err: windows::core::Error) -> Error {
-        Error::Os { code: err.code().0, description: format!("windows error: {err}") }
+        Error::Os {
+            code: err.code().0,
+            description: format!("windows error: {err}"),
+        }
     }
 }
 
 fn to_wide_path(path: impl AsRef<OsStr>) -> Vec<u16> {
-    path.as_ref().encode_wide().chain(std::iter::once(0)).collect()
+    path.as_ref()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 #[derive(Clone, Default, Debug)]
@@ -36,10 +48,14 @@ impl PlatformTrashContext {
 }
 impl TrashContext {
     /// See https://docs.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-_shfileopstructa
-    pub(crate) fn delete_specified_canonicalized(&self, full_paths: Vec<PathBuf>) -> Result<(), Error> {
+    pub(crate) fn delete_specified_canonicalized(
+        &self,
+        full_paths: Vec<PathBuf>,
+    ) -> Result<(), Error> {
         ensure_com_initialized();
         unsafe {
-            let pfo: IFileOperation = CoCreateInstance(&FileOperation as *const _, None, CLSCTX_ALL).unwrap();
+            let pfo: IFileOperation =
+                CoCreateInstance(&FileOperation as *const _, None, CLSCTX_ALL).unwrap();
 
             pfo.SetOperationFlags(FOF_NO_UI | FOF_ALLOWUNDO | FOF_WANTNUKEWARNING)?;
 
@@ -52,7 +68,8 @@ impl TrashContext {
                     &wide_path_container[0..]
                 };
 
-                let shi: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide_path_slice.as_ptr()), None)?;
+                let shi: IShellItem =
+                    SHCreateItemFromParsingName(PCWSTR(wide_path_slice.as_ptr()), None)?;
 
                 pfo.DeleteItem(&shi, None)?;
             }
@@ -64,7 +81,9 @@ impl TrashContext {
                 // TODO: return the reason why the operation was aborted.
                 // We may retrieve reason from the IFileOperationProgressSink but
                 // the list of HRESULT codes is not documented.
-                return Err(Error::Unknown { description: "Some operations were aborted".into() });
+                return Err(Error::Unknown {
+                    description: "Some operations were aborted".into(),
+                });
             }
             Ok(())
         }
@@ -82,8 +101,11 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
     unsafe {
         let mut item_vec = Vec::new();
 
-        let recycle_bin: IShellItem =
-            SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, HANDLE::default())?;
+        let recycle_bin: IShellItem = SHGetKnownFolderItem(
+            &FOLDERID_RecycleBinFolder,
+            KF_FLAG_DEFAULT,
+            HANDLE::default(),
+        )?;
 
         let pesi: IEnumShellItems = recycle_bin.BindToHandler(None, &BHID_EnumItems)?;
 
@@ -111,7 +133,10 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                     // Converting a String back to OsString doesn't do extra work
                     item_vec.push(TrashItem {
                         id,
-                        name: name.into_string().map_err(|original| Error::ConvertOsString { original })?.into(),
+                        name: name
+                            .into_string()
+                            .map_err(|original| Error::ConvertOsString { original })?
+                            .into(),
                         original_parent: PathBuf::from(original_location),
                         time_deleted: date_deleted,
                     });
@@ -129,8 +154,11 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
 pub fn is_empty() -> Result<bool, Error> {
     ensure_com_initialized();
     unsafe {
-        let recycle_bin: IShellItem =
-            SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, HANDLE::default())?;
+        let recycle_bin: IShellItem = SHGetKnownFolderItem(
+            &FOLDERID_RecycleBinFolder,
+            KF_FLAG_DEFAULT,
+            HANDLE::default(),
+        )?;
         let pesi: IEnumShellItems = recycle_bin.BindToHandler(None, &BHID_EnumItems)?;
 
         let mut count = 0u32;
@@ -216,7 +244,10 @@ where
     for item in items.iter() {
         let path = item.original_path();
         if path.exists() {
-            return Err(Error::RestoreCollision { path, remaining_items: items });
+            return Err(Error::RestoreCollision {
+                path,
+                remaining_items: items,
+            });
         }
     }
     ensure_com_initialized();
@@ -228,10 +259,16 @@ where
             let parsing_name = PCWSTR(id_as_wide.as_ptr());
             let trash_item: IShellItem = SHCreateItemFromParsingName(parsing_name, None)?;
             let parent_path_wide = to_wide_path(&item.original_parent);
-            let orig_folder_shi: IShellItem = SHCreateItemFromParsingName(PCWSTR(parent_path_wide.as_ptr()), None)?;
+            let orig_folder_shi: IShellItem =
+                SHCreateItemFromParsingName(PCWSTR(parent_path_wide.as_ptr()), None)?;
             let name_wstr = to_wide_path(&item.name);
 
-            pfo.MoveItem(&trash_item, &orig_folder_shi, PCWSTR(name_wstr.as_ptr()), None)?;
+            pfo.MoveItem(
+                &trash_item,
+                &orig_folder_shi,
+                PCWSTR(name_wstr.as_ptr()),
+                None,
+            )?;
         }
         if !items.is_empty() {
             pfo.PerformOperations()?;
@@ -273,7 +310,10 @@ struct CoInitializer {}
 impl CoInitializer {
     fn new() -> CoInitializer {
         //let first = INITIALIZER_THREAD_COUNT.fetch_add(1, Ordering::SeqCst) == 0;
-        #[cfg(all(not(feature = "coinit_multithreaded"), not(feature = "coinit_apartmentthreaded")))]
+        #[cfg(all(
+            not(feature = "coinit_multithreaded"),
+            not(feature = "coinit_apartmentthreaded")
+        ))]
         {
             0 = "THIS IS AN ERROR ON PURPOSE. Either the `coinit_multithreaded` or the `coinit_apartmentthreaded` feature must be specified";
         }

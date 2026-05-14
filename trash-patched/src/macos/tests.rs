@@ -83,10 +83,17 @@ fn create_hfs_volume() -> std::io::Result<(impl Drop, tempfile::TempDir)> {
     let dmg_file = tmp.path().join("fs.dmg");
     let cleanup = {
         // Create dmg file
-        Command::new("hdiutil").args(["create", "-size", "1m", "-fs", "HFS+"]).arg(&dmg_file).status()?;
+        Command::new("hdiutil")
+            .args(["create", "-size", "1m", "-fs", "HFS+"])
+            .arg(&dmg_file)
+            .status()?;
 
         // Mount dmg file into temporary location
-        Command::new("hdiutil").args(["attach", "-nobrowse", "-mountpoint"]).arg(tmp.path()).arg(&dmg_file).status()?;
+        Command::new("hdiutil")
+            .args(["attach", "-nobrowse", "-mountpoint"])
+            .arg(tmp.path())
+            .arg(&dmg_file)
+            .status()?;
 
         // Ensure that the mount point is always cleaned up
         defer::defer({

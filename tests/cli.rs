@@ -1,5 +1,5 @@
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
@@ -61,11 +61,7 @@ fn test_empty_dir_with_d_flag() {
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
 
-    trache()
-        .arg("-d")
-        .arg(&dir)
-        .assert()
-        .success();
+    trache().arg("-d").arg(&dir).assert().success();
 
     assert!(!dir.exists());
 }
@@ -92,11 +88,7 @@ fn test_nonempty_dir_with_r_flag() {
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("file.txt"), "content").unwrap();
 
-    trache()
-        .arg("-r")
-        .arg(&dir)
-        .assert()
-        .success();
+    trache().arg("-r").arg(&dir).assert().success();
 
     assert!(!dir.exists());
 }
@@ -108,11 +100,7 @@ fn test_nonempty_dir_with_capital_r_flag() {
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("file.txt"), "content").unwrap();
 
-    trache()
-        .arg("-R")
-        .arg(&dir)
-        .assert()
-        .success();
+    trache().arg("-R").arg(&dir).assert().success();
 
     assert!(!dir.exists());
 }
@@ -124,11 +112,7 @@ fn test_recursive_long_flag() {
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("file.txt"), "content").unwrap();
 
-    trache()
-        .arg("--recursive")
-        .arg(&dir)
-        .assert()
-        .success();
+    trache().arg("--recursive").arg(&dir).assert().success();
 
     assert!(!dir.exists());
 }
@@ -139,11 +123,7 @@ fn test_dir_long_flag() {
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
 
-    trache()
-        .arg("--dir")
-        .arg(&dir)
-        .assert()
-        .success();
+    trache().arg("--dir").arg(&dir).assert().success();
 
     assert!(!dir.exists());
 }
@@ -282,12 +262,7 @@ fn test_force_overrides_interactive() {
     fs::write(&file, "hello").unwrap();
 
     // -i -f: force wins (last flag)
-    trache()
-        .arg("-i")
-        .arg("-f")
-        .arg(&file)
-        .assert()
-        .success();
+    trache().arg("-i").arg("-f").arg(&file).assert().success();
 
     assert!(!file.exists());
 }
@@ -382,7 +357,9 @@ fn test_preserve_root_blocks_root() {
         .arg("/")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("dangerous to operate recursively on '/'"));
+        .stderr(predicate::str::contains(
+            "dangerous to operate recursively on '/'",
+        ));
 }
 
 #[test]
@@ -394,7 +371,9 @@ fn test_preserve_root_explicit() {
         .arg("/")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("dangerous to operate recursively on '/'"));
+        .stderr(predicate::str::contains(
+            "dangerous to operate recursively on '/'",
+        ));
 }
 
 #[test]
@@ -438,11 +417,7 @@ fn test_one_file_system_short_flag() {
     fs::write(&file, "hello").unwrap();
 
     // -x should be accepted and work on regular files
-    trache()
-        .arg("-x")
-        .arg(&file)
-        .assert()
-        .success();
+    trache().arg("-x").arg(&file).assert().success();
 
     assert!(!file.exists());
 }
@@ -471,12 +446,7 @@ fn test_one_file_system_with_recursive() {
     fs::write(dir.join("file.txt"), "content").unwrap();
 
     // -rx should work on directories
-    trache()
-        .arg("-r")
-        .arg("-x")
-        .arg(&dir)
-        .assert()
-        .success();
+    trache().arg("-r").arg("-x").arg(&dir).assert().success();
 
     assert!(!dir.exists());
 }
@@ -490,11 +460,7 @@ fn test_compat_p_flag_ignored() {
     fs::write(&file, "hello").unwrap();
 
     // -P should be silently ignored (BSD compat)
-    trache()
-        .arg("-P")
-        .arg(&file)
-        .assert()
-        .success();
+    trache().arg("-P").arg(&file).assert().success();
 
     assert!(!file.exists());
 }
@@ -508,11 +474,7 @@ fn test_compat_p_flag_combines_with_other_flags() {
     fs::write(&file, "hello").unwrap();
 
     // -P combined with -r should still work (P is a no-op)
-    trache()
-        .arg("-rP")
-        .arg(&dir)
-        .assert()
-        .success();
+    trache().arg("-rP").arg(&dir).assert().success();
 
     assert!(!dir.exists());
 }
@@ -563,11 +525,7 @@ fn test_double_dash_separator() {
     fs::write(&file, "hello").unwrap();
 
     // -- should allow files starting with -
-    trache()
-        .arg("--")
-        .arg(&file)
-        .assert()
-        .success();
+    trache().arg("--").arg(&file).assert().success();
 
     assert!(!file.exists());
 }
@@ -843,10 +801,7 @@ fn test_symlink_removes_link_not_target() {
     #[cfg(windows)]
     std::os::windows::fs::symlink_file(&target, &link).unwrap();
 
-    trache()
-        .arg(&link)
-        .assert()
-        .success();
+    trache().arg(&link).assert().success();
 
     assert!(!link.exists()); // Link should be gone
     assert!(target.exists()); // Target should still exist

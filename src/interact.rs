@@ -169,14 +169,12 @@ pub fn untrash_name(path: &Path, n: usize) -> PathBuf {
 
 pub fn find_untrash_range(path: &Path, count: usize) -> usize {
     let mut start = 1;
-    'outer: loop {
-        for i in start..start + count {
-            if untrash_name(path, i).exists() {
-                start = i + 1;
-                continue 'outer;
-            }
+    loop {
+        if let Some(conflict) = (start..start + count).find(|&i| untrash_name(path, i).exists()) {
+            start = conflict + 1;
+        } else {
+            return start;
         }
-        return start;
     }
 }
 
@@ -213,8 +211,14 @@ pub fn parse_selection(input: &str, max: usize) -> Result<Vec<usize>, String> {
             continue;
         }
         if let Some((a, b)) = part.split_once('-') {
-            let start: usize = a.trim().parse().map_err(|_| format!("invalid number: '{}'", a.trim()))?;
-            let end: usize = b.trim().parse().map_err(|_| format!("invalid number: '{}'", b.trim()))?;
+            let start: usize = a
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid number: '{}'", a.trim()))?;
+            let end: usize = b
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid number: '{}'", b.trim()))?;
             if start > end {
                 return Err(format!("invalid range: {start}-{end}"));
             }
@@ -225,7 +229,9 @@ pub fn parse_selection(input: &str, max: usize) -> Result<Vec<usize>, String> {
                 result.push(i);
             }
         } else {
-            let n: usize = part.parse().map_err(|_| format!("invalid number: '{part}'"))?;
+            let n: usize = part
+                .parse()
+                .map_err(|_| format!("invalid number: '{part}'"))?;
             if n < 1 || n > max {
                 return Err(format!("selection {n} out of range (1-{max})"));
             }
@@ -287,26 +293,41 @@ mod tests {
     #[test]
     fn test_untrash_name_with_ext() {
         let p = Path::new("/home/user/foo.txt");
-        assert_eq!(untrash_name(p, 1), PathBuf::from("/home/user/foo-untrash_1.txt"));
-        assert_eq!(untrash_name(p, 42), PathBuf::from("/home/user/foo-untrash_42.txt"));
+        assert_eq!(
+            untrash_name(p, 1),
+            PathBuf::from("/home/user/foo-untrash_1.txt")
+        );
+        assert_eq!(
+            untrash_name(p, 42),
+            PathBuf::from("/home/user/foo-untrash_42.txt")
+        );
     }
 
     #[test]
     fn test_untrash_name_no_ext() {
         let p = Path::new("/home/user/Makefile");
-        assert_eq!(untrash_name(p, 1), PathBuf::from("/home/user/Makefile-untrash_1"));
+        assert_eq!(
+            untrash_name(p, 1),
+            PathBuf::from("/home/user/Makefile-untrash_1")
+        );
     }
 
     #[test]
     fn test_untrash_name_dotfile() {
         let p = Path::new("/home/user/.gitignore");
-        assert_eq!(untrash_name(p, 1), PathBuf::from("/home/user/.gitignore-untrash_1"));
+        assert_eq!(
+            untrash_name(p, 1),
+            PathBuf::from("/home/user/.gitignore-untrash_1")
+        );
     }
 
     #[test]
     fn test_untrash_name_multiple_dots() {
         let p = Path::new("/home/user/archive.tar.gz");
-        assert_eq!(untrash_name(p, 1), PathBuf::from("/home/user/archive.tar-untrash_1.gz"));
+        assert_eq!(
+            untrash_name(p, 1),
+            PathBuf::from("/home/user/archive.tar-untrash_1.gz")
+        );
     }
 
     // --- find_untrash_range tests ---
@@ -370,7 +391,10 @@ mod tests {
         let mut input = Cursor::new(b"o\n");
         let path = Path::new("/home/user/foo.txt");
         let keep = Path::new("/home/user/foo-untrash_1.txt");
-        assert_eq!(prompt_collision(&mut input, path, keep, false), CollisionChoice::Overwrite);
+        assert_eq!(
+            prompt_collision(&mut input, path, keep, false),
+            CollisionChoice::Overwrite
+        );
     }
 
     #[test]
@@ -378,7 +402,10 @@ mod tests {
         let mut input = Cursor::new(b"k\n");
         let path = Path::new("/home/user/foo.txt");
         let keep = Path::new("/home/user/foo-untrash_1.txt");
-        assert_eq!(prompt_collision(&mut input, path, keep, false), CollisionChoice::KeepBoth);
+        assert_eq!(
+            prompt_collision(&mut input, path, keep, false),
+            CollisionChoice::KeepBoth
+        );
     }
 
     #[test]
@@ -386,7 +413,10 @@ mod tests {
         let mut input = Cursor::new(b"n\n");
         let path = Path::new("/home/user/foo.txt");
         let keep = Path::new("/home/user/foo-untrash_1.txt");
-        assert_eq!(prompt_collision(&mut input, path, keep, false), CollisionChoice::None);
+        assert_eq!(
+            prompt_collision(&mut input, path, keep, false),
+            CollisionChoice::None
+        );
     }
 
     #[test]
@@ -394,7 +424,10 @@ mod tests {
         let mut input = Cursor::new(b"q\n");
         let path = Path::new("/home/user/foo.txt");
         let keep = Path::new("/home/user/foo-untrash_1.txt");
-        assert_eq!(prompt_collision(&mut input, path, keep, false), CollisionChoice::Quit);
+        assert_eq!(
+            prompt_collision(&mut input, path, keep, false),
+            CollisionChoice::Quit
+        );
     }
 
     #[test]
@@ -402,7 +435,10 @@ mod tests {
         let mut input = Cursor::new(b"x\no\n");
         let path = Path::new("/home/user/foo.txt");
         let keep = Path::new("/home/user/foo-untrash_1.txt");
-        assert_eq!(prompt_collision(&mut input, path, keep, false), CollisionChoice::Overwrite);
+        assert_eq!(
+            prompt_collision(&mut input, path, keep, false),
+            CollisionChoice::Overwrite
+        );
     }
 
     #[test]
@@ -410,16 +446,28 @@ mod tests {
         let mut input = Cursor::new(b"");
         let path = Path::new("/home/user/foo.txt");
         let keep = Path::new("/home/user/foo-untrash_1.txt");
-        assert_eq!(prompt_collision(&mut input, path, keep, false), CollisionChoice::Quit);
+        assert_eq!(
+            prompt_collision(&mut input, path, keep, false),
+            CollisionChoice::Quit
+        );
     }
 
     // --- prompt_twins tests ---
 
     fn sample_twins() -> Vec<TwinInfo> {
         vec![
-            TwinInfo { name: "foo.txt".into(), timestamp: "2024-01-15 10:30".into() },
-            TwinInfo { name: "foo.txt".into(), timestamp: "2024-01-16 11:45".into() },
-            TwinInfo { name: "foo.txt".into(), timestamp: "2024-01-17 09:00".into() },
+            TwinInfo {
+                name: "foo.txt".into(),
+                timestamp: "2024-01-15 10:30".into(),
+            },
+            TwinInfo {
+                name: "foo.txt".into(),
+                timestamp: "2024-01-16 11:45".into(),
+            },
+            TwinInfo {
+                name: "foo.txt".into(),
+                timestamp: "2024-01-17 09:00".into(),
+            },
         ]
     }
 
@@ -427,7 +475,13 @@ mod tests {
     fn test_prompt_twins_all() {
         let mut input = Cursor::new(b"a\n");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::All);
     }
 
@@ -435,7 +489,13 @@ mod tests {
     fn test_prompt_twins_none() {
         let mut input = Cursor::new(b"n\n");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::None);
     }
 
@@ -443,7 +503,13 @@ mod tests {
     fn test_prompt_twins_quit() {
         let mut input = Cursor::new(b"q\n");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::Quit);
     }
 
@@ -451,7 +517,13 @@ mod tests {
     fn test_prompt_twins_list_then_all() {
         let mut input = Cursor::new(b"l\na\n");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::All);
     }
 
@@ -459,7 +531,13 @@ mod tests {
     fn test_prompt_twins_some_single() {
         let mut input = Cursor::new(b"s\n2\n");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::Some(vec![2]));
     }
 
@@ -467,7 +545,13 @@ mod tests {
     fn test_prompt_twins_some_range() {
         let mut input = Cursor::new(b"s\n1,3\n");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::Some(vec![1, 3]));
     }
 
@@ -475,7 +559,13 @@ mod tests {
     fn test_prompt_twins_some_invalid_then_valid() {
         let mut input = Cursor::new(b"s\nabc\n2\n");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::Some(vec![2]));
     }
 
@@ -483,7 +573,13 @@ mod tests {
     fn test_prompt_twins_eof() {
         let mut input = Cursor::new(b"");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::Quit);
     }
 
@@ -491,7 +587,13 @@ mod tests {
     fn test_prompt_twins_some_eof_during_selection() {
         let mut input = Cursor::new(b"s\n");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::None);
     }
 
@@ -499,7 +601,13 @@ mod tests {
     fn test_prompt_twins_invalid_then_valid() {
         let mut input = Cursor::new(b"x\nz\na\n");
         let twins = sample_twins();
-        let choice = prompt_twins(&mut input, Path::new("/tmp/foo.txt"), &twins, "foo-untrash_{1..3}.txt", false);
+        let choice = prompt_twins(
+            &mut input,
+            Path::new("/tmp/foo.txt"),
+            &twins,
+            "foo-untrash_{1..3}.txt",
+            false,
+        );
         assert_eq!(choice, TwinChoice::All);
     }
 }

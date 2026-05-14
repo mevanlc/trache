@@ -58,7 +58,9 @@ pub struct PlatformTrashContext {
 }
 impl PlatformTrashContext {
     pub const fn new() -> Self {
-        Self { delete_method: DeleteMethod::new() }
+        Self {
+            delete_method: DeleteMethod::new(),
+        }
     }
 }
 pub trait TrashContextExtMacos {
@@ -102,7 +104,10 @@ fn delete_using_file_mgr<P: AsRef<Path>>(full_paths: &[P]) -> Result<(), Error> 
 
         if let Err(err) = res {
             return Err(Error::Unknown {
-                description: format!("While deleting '{:?}', `trashItemAtURL` failed: {err}", &path),
+                description: format!(
+                    "While deleting '{:?}', `trashItemAtURL` failed: {err}",
+                    &path
+                ),
             });
         }
     }
