@@ -33,6 +33,7 @@ Arguments:
 Options:
       --trash-list              List items in trash
       --trash-empty             Empty the entire trash
+      --trash-stats             Show trash item counts and apparent sizes; -v lists items
       --trash-undo <PATTERN>    Restore items matching pattern from trash (see --help)
       --trash-purge <PATTERN>   Permanently delete items matching pattern from trash (see --help)
       --trash-dry-run           Show what would be done without doing it

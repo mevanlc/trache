@@ -652,6 +652,131 @@ fn test_trash_dry_run_undo() {
         .success();
 }
 
+#[test]
+#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
+fn test_trash_dry_run_empty_shows_summary_and_verbose_items() {
+    let tmp = TempDir::new().unwrap();
+    let data_home = tmp.path().join("data");
+    let file = tmp.path().join("systest_dryrun_empty.txt");
+    fs::write(&file, "keep me").unwrap();
+    let original_path = file.to_string_lossy().into_owned();
+    let trash_folder = data_home.join("Trash").to_string_lossy().into_owned();
+    let trash_payload = data_home.join("Trash/files/systest_dryrun_empty.txt");
+
+    trache()
+        .env("XDG_DATA_HOME", &data_home)
+        .arg(&file)
+        .assert()
+        .success();
+    assert!(!file.exists());
+    assert!(trash_payload.exists());
+
+    trache()
+        .env("XDG_DATA_HOME", &data_home)
+        .arg("--trash-empty")
+        .arg("--trash-dry-run")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Trash items:").not())
+        .stdout(predicate::str::contains("Trash summary:"))
+        .stdout(predicate::str::contains(trash_folder.clone()))
+        .stdout(predicate::str::contains("1 item(s), 7 B"))
+        .stdout(predicate::str::contains(original_path.clone()).not())
+        .stdout(predicate::str::contains(
+            "Would permanently delete: 1 item(s), 7 B",
+        ));
+    assert!(trash_payload.exists());
+
+    trache()
+        .env("XDG_DATA_HOME", &data_home)
+        .arg("--trash-empty")
+        .arg("--trash-dry-run")
+        .arg("--verbose")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Trash items:"))
+        .stdout(predicate::str::contains("Trash summary:"))
+        .stdout(predicate::str::contains(trash_folder))
+        .stdout(predicate::str::contains("7 B"))
+        .stdout(predicate::str::contains(original_path))
+        .stdout(
+            predicate::str::is_match(
+                r"(?s)^Trash items:.*\n\nTrash summary:.*\nWould permanently delete:",
+            )
+            .unwrap(),
+        );
+    assert!(trash_payload.exists());
+
+    trache()
+        .env("XDG_DATA_HOME", &data_home)
+        .arg("--trash-list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("systest_dryrun_empty.txt"));
+}
+
+#[test]
+#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
+fn test_trash_stats_shows_rollups_and_verbose_items() {
+    let tmp = TempDir::new().unwrap();
+    let data_home = tmp.path().join("data");
+    let file = tmp.path().join("stats-file.bin");
+    let dir = tmp.path().join("stats-dir");
+    fs::write(&file, vec![0; 4096]).unwrap();
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("nested.bin"), vec![0; 8192]).unwrap();
+    let original_path = file.to_string_lossy().into_owned();
+    let original_dir = dir.to_string_lossy().into_owned();
+    let trash_folder = data_home.join("Trash").to_string_lossy().into_owned();
+
+    trache()
+        .env("XDG_DATA_HOME", &data_home)
+        .arg(&file)
+        .assert()
+        .success();
+    trache()
+        .env("XDG_DATA_HOME", &data_home)
+        .arg("-r")
+        .arg(&dir)
+        .assert()
+        .success();
+    assert!(!file.exists());
+    assert!(!dir.exists());
+
+    trache()
+        .env("XDG_DATA_HOME", &data_home)
+        .arg("--trash-stats")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Trash items:").not())
+        .stdout(predicate::str::contains("Trash summary:"))
+        .stdout(predicate::str::contains(trash_folder.clone()))
+        .stdout(predicate::str::contains("2 item(s), 12.0 KiB"))
+        .stdout(predicate::str::contains("Total: 2 item(s), 12.0 KiB"))
+        .stdout(predicate::str::contains(original_path.clone()).not())
+        .stdout(predicate::str::contains(original_dir.clone()).not());
+
+    trache()
+        .env("XDG_DATA_HOME", &data_home)
+        .arg("--trash-stats")
+        .arg("-v")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Trash items:"))
+        .stdout(predicate::str::contains("Trash summary:"))
+        .stdout(predicate::str::contains(trash_folder))
+        .stdout(predicate::str::contains("4.0 KiB"))
+        .stdout(predicate::str::contains("8.0 KiB"))
+        .stdout(predicate::str::contains(original_path))
+        .stdout(predicate::str::contains(original_dir))
+        .stdout(
+            predicate::str::is_match(r"(?s)^Trash items:.*\n\nTrash summary:.*\nTotal:").unwrap(),
+        );
+
+    assert!(!file.exists());
+    assert!(!dir.exists());
+}
+
 // Interactive undo: collision cases
 
 #[test]
