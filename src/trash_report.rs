@@ -32,12 +32,15 @@ struct TrashItemReport {
 #[derive(Debug)]
 enum ReportedSize {
     Exact(u64),
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Unavailable(UnsizedReason),
 }
 
 #[derive(Debug)]
 enum UnsizedReason {
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Directory { immediate_entries: usize },
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     MetadataError { message: String },
 }
 
