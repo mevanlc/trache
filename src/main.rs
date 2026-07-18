@@ -1,11 +1,14 @@
 mod interact;
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
+))]
+mod trash_report;
 
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
-use bytesize::ByteSize;
 use clap::{ArgGroup, Parser, ValueEnum};
 use interact::prompt_yes;
 #[cfg(any(
@@ -172,8 +175,6 @@ struct TrashOptions {
     all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 use chrono::{DateTime, Local};
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
-use trash::os_limited::trash_folders;
 #[cfg(any(
     target_os = "windows",
     all(unix, not(target_os = "macos"), not(target_os = "ios"))
@@ -197,8 +198,13 @@ struct Cli {
     #[arg(long = "trash-empty")]
     empty: bool,
 
-    /// Show trash item counts and apparent sizes; -v lists items
-    #[arg(long = "trash-stats")]
+    /// Show trash item counts and sizes; -v lists items
+    #[arg(
+        long = "trash-stats",
+        long_help = "Show trash item counts and apparent sizes; -v lists items.\n\n\
+            On Windows, top-level file sizes are exact. Directories and metadata failures make \
+            affected group and overall byte totals explicit lower bounds."
+    )]
     stats: bool,
 
     /// Restore items matching pattern from trash (see --help)
@@ -1229,183 +1235,33 @@ fn purge_items(
     Err("Purging trash is not supported on this platform".into())
 }
 
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
-struct TrashItemStat {
-    item: trash::TrashItem,
-    apparent_size: u64,
-}
-
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
-fn freedesktop_item_paths(item: &trash::TrashItem) -> io::Result<(PathBuf, PathBuf)> {
-    let info_file = Path::new(&item.id);
-    let trash_folder = info_file
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid trash item ID"))?;
-    let name_in_trash = info_file
-        .file_stem()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid trash item ID"))?;
-    let payload = trash_folder.join("files").join(name_in_trash);
-    Ok((trash_folder.to_owned(), payload))
-}
-
-/// Return the apparent size of a path and all descendants. Symlinks are measured but not followed.
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
-fn apparent_size(path: &Path) -> io::Result<u64> {
-    let mut total = 0u64;
-    let mut pending = vec![path.to_owned()];
-
-    while let Some(path) = pending.pop() {
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.is_dir() {
-            for entry in fs::read_dir(&path)? {
-                pending.push(entry?.path());
-            }
-        } else {
-            total = total
-                .checked_add(metadata.len())
-                .ok_or_else(|| io::Error::other("trash size exceeds u64"))?;
-        }
-    }
-
-    Ok(total)
-}
-
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
-fn format_size(bytes: u64) -> String {
-    ByteSize::b(bytes).display().iec().to_string()
-}
-
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
-fn print_trash_report(
-    items: Vec<trash::TrashItem>,
-    verbose: bool,
-    total_label: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut by_folder: std::collections::BTreeMap<PathBuf, Vec<TrashItemStat>> =
-        std::collections::BTreeMap::new();
-
-    if let Ok(folders) = trash_folders() {
-        for folder in folders {
-            by_folder.entry(folder).or_default();
-        }
-    }
-
-    for item in items {
-        let (folder, payload) = freedesktop_item_paths(&item)?;
-        let apparent_size = apparent_size(&payload)?;
-        by_folder.entry(folder).or_default().push(TrashItemStat {
-            item,
-            apparent_size,
-        });
-    }
-
-    if by_folder.is_empty() {
-        println!("No trash directories found.");
-        return Ok(());
-    }
-
-    let mut total_items = 0usize;
-    let mut total_size = 0u64;
-    let mut folder_stats = Vec::with_capacity(by_folder.len());
-
-    for (folder, mut item_stats) in by_folder {
-        item_stats.sort_by_key(|stat| stat.item.original_path());
-        let folder_size = item_stats.iter().try_fold(0u64, |total, stat| {
-            total
-                .checked_add(stat.apparent_size)
-                .ok_or_else(|| io::Error::other("trash size exceeds u64"))
-        })?;
-        total_items += item_stats.len();
-        total_size = total_size
-            .checked_add(folder_size)
-            .ok_or_else(|| io::Error::other("trash size exceeds u64"))?;
-        folder_stats.push((folder, item_stats, folder_size));
-    }
-
-    if verbose {
-        println!("Trash items:");
-        for (folder, item_stats, folder_size) in &folder_stats {
-            println!(
-                "  {}: {} item(s), {}",
-                folder.display(),
-                item_stats.len(),
-                format_size(*folder_size)
-            );
-            for stat in item_stats {
-                println!(
-                    "    {:>10}  {}",
-                    format_size(stat.apparent_size),
-                    stat.item.original_path().display()
-                );
-            }
-        }
-        println!();
-    }
-
-    println!("Trash summary:");
-    for (folder, item_stats, folder_size) in &folder_stats {
-        println!(
-            "  {}: {} item(s), {}",
-            folder.display(),
-            item_stats.len(),
-            format_size(*folder_size)
-        );
-    }
-
-    println!(
-        "{total_label}: {total_items} item(s), {}",
-        format_size(total_size)
-    );
-    Ok(())
-}
-
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
+))]
 fn trash_stats(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    print_trash_report(list()?, verbose, "Total")
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "ios"))]
-fn trash_stats(_verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    Err("Trash statistics are currently supported only on Freedesktop platforms".into())
-}
-
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
-fn empty_trash(dry_run: bool, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let items = list()?;
-
-    if dry_run {
-        return print_trash_report(items, verbose, "Would permanently delete");
-    }
-
-    if items.is_empty() {
-        println!("Trash is already empty.");
-        return Ok(());
-    }
-
-    let count = items.len();
-    purge_all(items)?;
-    println!("Permanently deleted {count} item(s).");
+    let report = trash_report::collect_trash_report()?;
+    trash_report::print_trash_report(&report, verbose, "Total")?;
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
-fn empty_trash(dry_run: bool, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let items = list()?;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn trash_stats(_verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+    Err("Trash statistics are not supported on this platform".into())
+}
 
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
+))]
+fn empty_trash(dry_run: bool, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     if dry_run {
-        println!("Trash scope: Windows Recycle Bin (all volumes)");
-        if items.is_empty() {
-            println!("Trash is already empty.");
-        } else {
-            if verbose {
-                print_items(&items, "would purge");
-            }
-            println!("Would permanently delete {} item(s).", items.len());
-        }
+        let report = trash_report::collect_trash_report()?;
+        trash_report::print_trash_report(&report, verbose, "Would permanently delete")?;
         return Ok(());
     }
 
+    let items = list()?;
     if items.is_empty() {
         println!("Trash is already empty.");
         return Ok(());

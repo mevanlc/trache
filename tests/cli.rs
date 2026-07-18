@@ -2,10 +2,25 @@ use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::fs;
+#[cfg(target_os = "windows")]
+use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
 fn trache() -> Command {
     cargo_bin_cmd!("trache")
+}
+
+#[cfg(target_os = "windows")]
+struct TrashedItemCleanup(String);
+
+#[cfg(target_os = "windows")]
+impl Drop for TrashedItemCleanup {
+    fn drop(&mut self) {
+        let _ = trache()
+            .arg("--trash-purge")
+            .arg(format!("full:{}", self.0))
+            .output();
+    }
 }
 
 #[test]
@@ -350,6 +365,7 @@ fn test_silent_by_default() {
 // Phase 4: Root protection tests
 
 #[test]
+#[cfg(unix)]
 fn test_preserve_root_blocks_root() {
     // Attempting to trash / should fail by default
     trache()
@@ -363,6 +379,7 @@ fn test_preserve_root_blocks_root() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_preserve_root_explicit() {
     // --preserve-root=yes should also block /
     trache()
@@ -411,6 +428,7 @@ fn test_preserve_root_all_flag_accepted() {
 // Phase 5: Filesystem boundaries tests
 
 #[test]
+#[cfg(unix)]
 fn test_one_file_system_short_flag() {
     let tmp = TempDir::new().unwrap();
     let file = tmp.path().join("test.txt");
@@ -423,6 +441,7 @@ fn test_one_file_system_short_flag() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_one_file_system_long_flag() {
     let tmp = TempDir::new().unwrap();
     let file = tmp.path().join("test.txt");
@@ -439,6 +458,7 @@ fn test_one_file_system_long_flag() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_one_file_system_with_recursive() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path().join("subdir");
@@ -775,6 +795,65 @@ fn test_trash_stats_shows_rollups_and_verbose_items() {
 
     assert!(!file.exists());
     assert!(!dir.exists());
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn test_windows_trash_stats_and_empty_dry_run_report_file_without_removing_it() {
+    let tmp = TempDir::new().unwrap();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let name = format!("trache-stats-{}-{nonce}.bin", std::process::id());
+    let cleanup = TrashedItemCleanup(name.clone());
+    let file = tmp.path().join(&name);
+    fs::write(&file, vec![0; 4096]).unwrap();
+    let original_path = file.to_string_lossy().into_owned();
+    let exact_item_pattern = format!(r"4\.0 KiB  {}", regex::escape(&original_path));
+
+    trache().arg(&file).assert().success();
+    assert!(!file.exists());
+
+    trache()
+        .arg("--trash-stats")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Trash summary:"))
+        .stdout(predicate::str::contains("Total:"));
+
+    trache()
+        .arg("--trash-stats")
+        .arg("--verbose")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Trash items:"))
+        .stdout(predicate::str::is_match(exact_item_pattern).unwrap())
+        .stdout(
+            predicate::str::is_match(r"(?s)^Trash items:.*\n\nTrash summary:.*\nTotal:").unwrap(),
+        );
+
+    trache()
+        .arg("--trash-empty")
+        .arg("--trash-dry-run")
+        .arg("--verbose")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(original_path))
+        .stdout(
+            predicate::str::is_match(
+                r"(?s)^Trash items:.*\n\nTrash summary:.*\nWould permanently delete:",
+            )
+            .unwrap(),
+        );
+
+    trache()
+        .arg("--trash-list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&name));
+
+    drop(cleanup);
 }
 
 // Interactive undo: collision cases

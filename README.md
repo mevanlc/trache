@@ -33,7 +33,7 @@ Arguments:
 Options:
       --trash-list              List items in trash
       --trash-empty             Empty the entire trash
-      --trash-stats             Show trash item counts and apparent sizes; -v lists items
+      --trash-stats             Show trash item counts and sizes; -v lists items
       --trash-undo <PATTERN>    Restore items matching pattern from trash (see --help)
       --trash-purge <PATTERN>   Permanently delete items matching pattern from trash (see --help)
       --trash-dry-run           Show what would be done without doing it
@@ -50,6 +50,12 @@ Options:
   -h, --help                    Print help (see more with '--help')
   -V, --version                 Print version
 ```
+
 # Limitations
 
 Trash restoration is unsupported on macOS. PRs welcome.
+
+On Windows, `--trash-stats` and `--trash-empty --trash-dry-run` report exact sizes for top-level
+files. Directory sizes are not recursively measured yet, so groups containing directories or
+metadata failures are reported as explicit `at least` lower bounds. Volume names in these reports
+describe each item's original path; they are not physical `$Recycle.Bin` directory paths.
