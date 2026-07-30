@@ -2,6 +2,7 @@ use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::fs;
+use std::path::Path;
 #[cfg(target_os = "windows")]
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
@@ -10,17 +11,36 @@ fn trache() -> Command {
     cargo_bin_cmd!("trache")
 }
 
-#[cfg(target_os = "windows")]
-struct TrashedItemCleanup(String);
+/// Owns a unique test directory and removes any of its items left in the real
+/// Recycle Bin/Trash before tempfile removes the live directory.
+struct TestDir(TempDir);
 
-#[cfg(target_os = "windows")]
-impl Drop for TrashedItemCleanup {
+impl TestDir {
+    fn new() -> std::io::Result<Self> {
+        TempDir::new().map(Self)
+    }
+
+    fn path(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(unix, not(target_os = "macos"), not(target_os = "ios"))
+))]
+impl Drop for TestDir {
     fn drop(&mut self) {
+        let root = regex::escape(&self.path().to_string_lossy());
         let _ = trache()
             .arg("--trash-purge")
-            .arg(format!("full:{}", self.0))
+            .arg(format!(r"full:path:regex:{root}(?:[\\/].*)?"))
             .output();
     }
+}
+
+fn exact_path_pattern(path: &Path) -> String {
+    format!("full:path:string:{}", path.display())
 }
 
 #[test]
@@ -34,7 +54,7 @@ fn test_help() {
 
 #[test]
 fn test_trash_file() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -59,7 +79,7 @@ fn test_nonexistent_file_fails() {
 
 #[test]
 fn test_dir_without_flag_fails() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
 
@@ -72,7 +92,7 @@ fn test_dir_without_flag_fails() {
 
 #[test]
 fn test_empty_dir_with_d_flag() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
 
@@ -83,7 +103,7 @@ fn test_empty_dir_with_d_flag() {
 
 #[test]
 fn test_nonempty_dir_with_d_flag_fails() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("file.txt"), "content").unwrap();
@@ -98,7 +118,7 @@ fn test_nonempty_dir_with_d_flag_fails() {
 
 #[test]
 fn test_nonempty_dir_with_r_flag() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("file.txt"), "content").unwrap();
@@ -110,7 +130,7 @@ fn test_nonempty_dir_with_r_flag() {
 
 #[test]
 fn test_nonempty_dir_with_capital_r_flag() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("file.txt"), "content").unwrap();
@@ -122,7 +142,7 @@ fn test_nonempty_dir_with_capital_r_flag() {
 
 #[test]
 fn test_recursive_long_flag() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("file.txt"), "content").unwrap();
@@ -134,7 +154,7 @@ fn test_recursive_long_flag() {
 
 #[test]
 fn test_dir_long_flag() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
 
@@ -156,7 +176,7 @@ fn test_force_ignores_nonexistent() {
 
 #[test]
 fn test_interactive_always_yes() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -173,7 +193,7 @@ fn test_interactive_always_yes() {
 
 #[test]
 fn test_interactive_always_no() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -189,7 +209,7 @@ fn test_interactive_always_no() {
 
 #[test]
 fn test_interactive_long_form() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -205,7 +225,7 @@ fn test_interactive_long_form() {
 
 #[test]
 fn test_interactive_never() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -221,7 +241,7 @@ fn test_interactive_never() {
 
 #[test]
 fn test_prompt_once_with_many_files() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let files: Vec<_> = (0..5)
         .map(|i| {
             let f = tmp.path().join(format!("file{}.txt", i));
@@ -248,7 +268,7 @@ fn test_prompt_once_with_many_files() {
 
 #[test]
 fn test_prompt_once_declined() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let files: Vec<_> = (0..5)
         .map(|i| {
             let f = tmp.path().join(format!("file{}.txt", i));
@@ -272,7 +292,7 @@ fn test_prompt_once_declined() {
 
 #[test]
 fn test_force_overrides_interactive() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -284,7 +304,7 @@ fn test_force_overrides_interactive() {
 
 #[test]
 fn test_interactive_overrides_force() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -317,7 +337,7 @@ fn test_version() {
 
 #[test]
 fn test_verbose_flag() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -333,7 +353,7 @@ fn test_verbose_flag() {
 
 #[test]
 fn test_verbose_long_flag() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -349,7 +369,7 @@ fn test_verbose_long_flag() {
 
 #[test]
 fn test_silent_by_default() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -394,9 +414,43 @@ fn test_preserve_root_explicit() {
 }
 
 #[test]
+#[cfg(target_os = "windows")]
+fn test_windows_preserve_root_blocks_drive_root_but_allows_safe_dry_run_override() {
+    let current = std::env::current_dir().unwrap();
+    let root = current.ancestors().last().unwrap();
+    let dangerous = format!("dangerous to operate recursively on '{}'", root.display());
+
+    trache()
+        .arg("-r")
+        .arg("--trash-dry-run")
+        .arg(root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(&dangerous));
+
+    trache()
+        .arg("-r")
+        .arg("--preserve-root=yes")
+        .arg("--trash-dry-run")
+        .arg(root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(dangerous));
+
+    trache()
+        .arg("-r")
+        .arg("--no-preserve-root")
+        .arg("--trash-dry-run")
+        .arg(root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would trash"));
+}
+
+#[test]
 fn test_no_preserve_root_flag_accepted() {
     // --no-preserve-root should be accepted (but we test with a safe file)
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -412,7 +466,7 @@ fn test_no_preserve_root_flag_accepted() {
 #[test]
 fn test_preserve_root_all_flag_accepted() {
     // --preserve-root=all should be accepted
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -430,7 +484,7 @@ fn test_preserve_root_all_flag_accepted() {
 #[test]
 #[cfg(unix)]
 fn test_one_file_system_short_flag() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -443,7 +497,7 @@ fn test_one_file_system_short_flag() {
 #[test]
 #[cfg(unix)]
 fn test_one_file_system_long_flag() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -460,7 +514,7 @@ fn test_one_file_system_long_flag() {
 #[test]
 #[cfg(unix)]
 fn test_one_file_system_with_recursive() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let dir = tmp.path().join("subdir");
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("file.txt"), "content").unwrap();
@@ -471,11 +525,30 @@ fn test_one_file_system_with_recursive() {
     assert!(!dir.exists());
 }
 
+#[test]
+#[cfg(target_os = "windows")]
+fn test_windows_one_file_system_is_rejected_without_touching_the_file() {
+    let tmp = TestDir::new().unwrap();
+    let file = tmp.path().join("one-file-system.txt");
+    fs::write(&file, "keep me").unwrap();
+
+    trache()
+        .arg("--one-file-system")
+        .arg(&file)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--one-file-system is not supported on this platform",
+        ));
+
+    assert!(file.exists());
+}
+
 // Phase 6: Pattern type and compat flags
 
 #[test]
 fn test_compat_p_flag_ignored() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -487,7 +560,7 @@ fn test_compat_p_flag_ignored() {
 
 #[test]
 fn test_compat_p_flag_combines_with_other_flags() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let dir = tmp.path().join("mydir");
     fs::create_dir(&dir).unwrap();
     let file = dir.join("inner.txt");
@@ -501,7 +574,7 @@ fn test_compat_p_flag_combines_with_other_flags() {
 
 #[test]
 fn test_compat_w_flag_errors() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("test.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -540,7 +613,7 @@ fn test_reject_dotdot() {
 
 #[test]
 fn test_double_dash_separator() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("-weird-name.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -568,9 +641,10 @@ fn test_interactive_with_trash_undo_flag_accepted() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_trash_list_shows_trashed_item() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("systest_list.txt");
     fs::write(&file, "hello").unwrap();
+    let original_path = file.to_string_lossy().into_owned();
 
     trache().arg(&file).assert().success();
 
@@ -578,12 +652,12 @@ fn test_trash_list_shows_trashed_item() {
         .arg("--trash-list")
         .assert()
         .success()
-        .stdout(predicate::str::contains("systest_list.txt"));
+        .stdout(predicate::str::contains(original_path));
 
     // cleanup
     trache()
         .arg("--trash-purge")
-        .arg("full:systest_list.txt")
+        .arg(exact_path_pattern(&file))
         .assert()
         .success();
 }
@@ -591,7 +665,7 @@ fn test_trash_list_shows_trashed_item() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_trash_undo_restores_file() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("systest_undo.txt");
     fs::write(&file, "restore me").unwrap();
 
@@ -600,7 +674,7 @@ fn test_trash_undo_restores_file() {
 
     trache()
         .arg("--trash-undo")
-        .arg("full:systest_undo.txt")
+        .arg(exact_path_pattern(&file))
         .assert()
         .success()
         .stdout(predicate::str::contains("Restoring"));
@@ -623,15 +697,16 @@ fn test_trash_undo_no_match() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_trash_purge_removes_item() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("systest_purge.txt");
     fs::write(&file, "delete me").unwrap();
+    let original_path = file.to_string_lossy().into_owned();
 
     trache().arg(&file).assert().success();
 
     trache()
         .arg("--trash-purge")
-        .arg("full:systest_purge.txt")
+        .arg(exact_path_pattern(&file))
         .assert()
         .success()
         .stdout(predicate::str::contains("Purging"));
@@ -641,13 +716,13 @@ fn test_trash_purge_removes_item() {
         .arg("--trash-list")
         .assert()
         .success()
-        .stdout(predicate::str::contains("systest_purge.txt").not());
+        .stdout(predicate::str::contains(original_path).not());
 }
 
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_trash_dry_run_undo() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("systest_dryrun.txt");
     fs::write(&file, "hello").unwrap();
 
@@ -657,7 +732,7 @@ fn test_trash_dry_run_undo() {
     trache()
         .arg("--trash-dry-run")
         .arg("--trash-undo")
-        .arg("full:systest_dryrun.txt")
+        .arg(exact_path_pattern(&file))
         .assert()
         .success()
         .stdout(predicate::str::contains("would restore"));
@@ -667,7 +742,7 @@ fn test_trash_dry_run_undo() {
     // cleanup
     trache()
         .arg("--trash-purge")
-        .arg("full:systest_dryrun.txt")
+        .arg(exact_path_pattern(&file))
         .assert()
         .success();
 }
@@ -675,7 +750,7 @@ fn test_trash_dry_run_undo() {
 #[test]
 #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
 fn test_trash_dry_run_empty_shows_summary_and_verbose_items() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let data_home = tmp.path().join("data");
     let file = tmp.path().join("systest_dryrun_empty.txt");
     fs::write(&file, "keep me").unwrap();
@@ -738,7 +813,7 @@ fn test_trash_dry_run_empty_shows_summary_and_verbose_items() {
 #[test]
 #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
 fn test_trash_stats_shows_rollups_and_verbose_items() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let data_home = tmp.path().join("data");
     let file = tmp.path().join("stats-file.bin");
     let dir = tmp.path().join("stats-dir");
@@ -799,21 +874,28 @@ fn test_trash_stats_shows_rollups_and_verbose_items() {
 
 #[test]
 #[cfg(target_os = "windows")]
-fn test_windows_trash_stats_and_empty_dry_run_report_file_without_removing_it() {
-    let tmp = TempDir::new().unwrap();
+fn test_windows_recycle_bin_lifecycle_handles_unicode_file_and_directory() {
+    let tmp = TestDir::new().unwrap();
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let name = format!("trache-stats-{}-{nonce}.bin", std::process::id());
-    let cleanup = TrashedItemCleanup(name.clone());
+    let name = format!("trache stats ☃-{}-{nonce}.bin", std::process::id());
+    let dir_name = format!("trache dir 目录-{}-{nonce}", std::process::id());
     let file = tmp.path().join(&name);
+    let dir = tmp.path().join(&dir_name);
     fs::write(&file, vec![0; 4096]).unwrap();
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("one.txt"), "one").unwrap();
+    fs::write(dir.join("two.txt"), "two").unwrap();
     let original_path = file.to_string_lossy().into_owned();
+    let original_dir = dir.to_string_lossy().into_owned();
     let exact_item_pattern = format!(r"4\.0 KiB  {}", regex::escape(&original_path));
 
     trache().arg(&file).assert().success();
+    trache().arg("-r").arg(&dir).assert().success();
     assert!(!file.exists());
+    assert!(!dir.exists());
 
     trache()
         .arg("--trash-stats")
@@ -829,6 +911,10 @@ fn test_windows_trash_stats_and_empty_dry_run_report_file_without_removing_it() 
         .success()
         .stdout(predicate::str::contains("Trash items:"))
         .stdout(predicate::str::is_match(exact_item_pattern).unwrap())
+        .stdout(predicate::str::contains(format!(
+            "{} (directory, 2 immediate entries)",
+            original_dir
+        )))
         .stdout(
             predicate::str::is_match(r"(?s)^Trash items:.*\n\nTrash summary:.*\nTotal:").unwrap(),
         );
@@ -839,7 +925,8 @@ fn test_windows_trash_stats_and_empty_dry_run_report_file_without_removing_it() 
         .arg("--verbose")
         .assert()
         .success()
-        .stdout(predicate::str::contains(original_path))
+        .stdout(predicate::str::contains(&original_path))
+        .stdout(predicate::str::contains(&original_dir))
         .stdout(
             predicate::str::is_match(
                 r"(?s)^Trash items:.*\n\nTrash summary:.*\nWould permanently delete:",
@@ -851,9 +938,28 @@ fn test_windows_trash_stats_and_empty_dry_run_report_file_without_removing_it() 
         .arg("--trash-list")
         .assert()
         .success()
-        .stdout(predicate::str::contains(&name));
+        .stdout(predicate::str::contains(&name))
+        .stdout(predicate::str::contains(&dir_name));
 
-    drop(cleanup);
+    trache()
+        .arg("--trash-undo")
+        .arg(exact_path_pattern(&file))
+        .assert()
+        .success();
+    assert_eq!(fs::read(&file).unwrap(), vec![0; 4096]);
+
+    trache()
+        .arg("--trash-purge")
+        .arg(exact_path_pattern(&dir))
+        .assert()
+        .success();
+
+    trache()
+        .arg("--trash-list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&original_path).not())
+        .stdout(predicate::str::contains(&original_dir).not());
 }
 
 // Interactive undo: collision cases
@@ -861,7 +967,7 @@ fn test_windows_trash_stats_and_empty_dry_run_report_file_without_removing_it() 
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_trash_undo_collision_overwrite() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("systest_col_ow.txt");
     fs::write(&file, "original").unwrap();
 
@@ -871,7 +977,7 @@ fn test_trash_undo_collision_overwrite() {
     trache()
         .arg("-i")
         .arg("--trash-undo")
-        .arg("full:systest_col_ow.txt")
+        .arg(exact_path_pattern(&file))
         .write_stdin("o\n")
         .assert()
         .success()
@@ -883,7 +989,7 @@ fn test_trash_undo_collision_overwrite() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_trash_undo_collision_keep_both() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("systest_col_kb.txt");
     fs::write(&file, "original").unwrap();
 
@@ -893,7 +999,7 @@ fn test_trash_undo_collision_keep_both() {
     trache()
         .arg("-i")
         .arg("--trash-undo")
-        .arg("full:systest_col_kb.txt")
+        .arg(exact_path_pattern(&file))
         .write_stdin("k\n")
         .assert()
         .success()
@@ -908,7 +1014,7 @@ fn test_trash_undo_collision_keep_both() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_trash_undo_collision_skip() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("systest_col_skip.txt");
     fs::write(&file, "original").unwrap();
 
@@ -918,7 +1024,7 @@ fn test_trash_undo_collision_skip() {
     trache()
         .arg("-i")
         .arg("--trash-undo")
-        .arg("full:systest_col_skip.txt")
+        .arg(exact_path_pattern(&file))
         .write_stdin("n\n")
         .assert()
         .success();
@@ -928,7 +1034,7 @@ fn test_trash_undo_collision_skip() {
     // cleanup — item still in trash
     trache()
         .arg("--trash-purge")
-        .arg("full:systest_col_skip.txt")
+        .arg(exact_path_pattern(&file))
         .assert()
         .success();
 }
@@ -938,7 +1044,7 @@ fn test_trash_undo_collision_skip() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_trash_undo_twins_all() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("systest_tw_all.txt");
 
     fs::write(&file, "v1").unwrap();
@@ -950,7 +1056,7 @@ fn test_trash_undo_twins_all() {
     trache()
         .arg("-i")
         .arg("--trash-undo")
-        .arg("full:systest_tw_all.txt")
+        .arg(exact_path_pattern(&file))
         .write_stdin("a\n")
         .assert()
         .success();
@@ -964,7 +1070,7 @@ fn test_trash_undo_twins_all() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_trash_undo_twins_none() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let file = tmp.path().join("systest_tw_none.txt");
 
     fs::write(&file, "v1").unwrap();
@@ -975,7 +1081,7 @@ fn test_trash_undo_twins_none() {
     trache()
         .arg("-i")
         .arg("--trash-undo")
-        .arg("full:systest_tw_none.txt")
+        .arg(exact_path_pattern(&file))
         .write_stdin("n\n")
         .assert()
         .success();
@@ -985,7 +1091,7 @@ fn test_trash_undo_twins_none() {
     // cleanup
     trache()
         .arg("--trash-purge")
-        .arg("full:systest_tw_none.txt")
+        .arg(exact_path_pattern(&file))
         .assert()
         .success();
 }
@@ -994,7 +1100,7 @@ fn test_trash_undo_twins_none() {
 #[test]
 #[cfg_attr(target_os = "macos", ignore)]
 fn test_symlink_removes_link_not_target() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TestDir::new().unwrap();
     let target = tmp.path().join("target.txt");
     let link = tmp.path().join("link.txt");
 

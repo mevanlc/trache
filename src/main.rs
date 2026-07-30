@@ -640,6 +640,20 @@ fn is_dir_empty(path: &PathBuf) -> Result<bool, Box<dyn std::error::Error>> {
     Ok(fs::read_dir(path)?.next().is_none())
 }
 
+fn is_filesystem_root(path: &Path) -> bool {
+    let mut has_root = false;
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) => {}
+            Component::RootDir => has_root = true,
+            Component::CurDir | Component::ParentDir | Component::Normal(_) => return false,
+        }
+    }
+
+    has_root
+}
+
 fn check_preserve_root(path: &Path, mode: PreserveRoot) -> Result<(), String> {
     if mode == PreserveRoot::No {
         return Ok(());
@@ -648,11 +662,13 @@ fn check_preserve_root(path: &Path, mode: PreserveRoot) -> Result<(), String> {
     // Normalize the path to check for root
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
-    // Check if it's the root directory
-    if canonical == Path::new("/") {
-        return Err("it is dangerous to operate recursively on '/'\n\
-             use --no-preserve-root to override this failsafe"
-            .to_string());
+    // Protect Unix roots as well as Windows drive and UNC share roots.
+    if is_filesystem_root(&canonical) {
+        return Err(format!(
+            "it is dangerous to operate recursively on '{}'\n\
+             use --no-preserve-root to override this failsafe",
+            path.display()
+        ));
     }
 
     // For --preserve-root=all, also check if path is on a different device than its parent
@@ -1295,4 +1311,36 @@ fn empty_trash(dry_run: bool, _verbose: bool) -> Result<(), Box<dyn std::error::
 #[cfg(target_os = "ios")]
 fn empty_trash(_dry_run: bool, _verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     Err("Emptying trash is not supported on this platform".into())
+}
+
+#[cfg(test)]
+mod preserve_root_tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_the_current_filesystem_root() {
+        let current = std::env::current_dir().unwrap();
+        let root = current.ancestors().last().unwrap();
+
+        assert!(is_filesystem_root(root));
+        assert!(check_preserve_root(root, PreserveRoot::Yes).is_err());
+        assert!(check_preserve_root(root, PreserveRoot::No).is_ok());
+    }
+
+    #[test]
+    fn ordinary_absolute_paths_are_not_roots() {
+        let current = std::env::current_dir().unwrap();
+        assert!(!is_filesystem_root(&current));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn recognizes_windows_drive_verbatim_and_unc_roots() {
+        assert!(is_filesystem_root(Path::new(r"C:\")));
+        assert!(is_filesystem_root(Path::new(r"\\?\C:\")));
+        assert!(is_filesystem_root(Path::new(r"\\server\share\")));
+        assert!(!is_filesystem_root(Path::new(r"C:relative")));
+        assert!(!is_filesystem_root(Path::new(r"C:\Windows")));
+        assert!(!is_filesystem_root(Path::new(r"\\server\share\folder")));
+    }
 }
