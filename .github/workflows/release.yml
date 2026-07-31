@@ -7,6 +7,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  GIT_CONFIG_COUNT: '1'
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
 
 jobs:
   validate:
@@ -87,15 +90,15 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
     steps:
       - uses: actions/checkout@v7
 
       - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          merge-multiple: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --dir artifacts
 
       - name: Create draft release
         env:
@@ -105,4 +108,4 @@ jobs:
             --draft \
             --generate-notes \
             --title "$GITHUB_REF_NAME" \
-            artifacts/*
+            artifacts/*/*
