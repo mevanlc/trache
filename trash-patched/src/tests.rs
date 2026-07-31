@@ -116,6 +116,28 @@ mod os_limited {
         let _ = trash::os_limited::purge_all(items.iter().flat_map(|(_name, item)| item));
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[serial]
+    fn list_preserves_filename_extension() {
+        init_logging();
+        let prefix = get_unique_name();
+        let name = format!("{prefix}.txt");
+        File::create_new(&name).unwrap();
+        trash::delete(&name).unwrap();
+
+        let items: Vec<_> = trash::os_limited::list()
+            .unwrap()
+            .into_iter()
+            .filter(|item| item.name.as_encoded_bytes().starts_with(prefix.as_bytes()))
+            .collect();
+        let actual_names: Vec<_> = items.iter().map(|item| item.name.clone()).collect();
+
+        // Clean up before asserting so a regression does not leave test data behind.
+        trash::os_limited::purge_all(&items).unwrap();
+        assert_eq!(actual_names, vec![OsString::from(name)]);
+    }
+
     #[cfg(all(
         unix,
         not(target_os = "macos"),

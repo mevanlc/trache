@@ -2,8 +2,9 @@ use crate::{Error, TrashContext, TrashItem, TrashItemMetadata, TrashItemSize};
 use std::{
     borrow::Borrow,
     ffi::{c_void, OsStr, OsString},
+    fs,
     os::windows::{ffi::OsStrExt, prelude::*},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use windows::Win32::{
     Foundation::*, Storage::EnhancedStorage::*, System::Com::*, System::SystemServices::*,
@@ -121,11 +122,26 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
             match &arr[0] {
                 Some(item) => {
                     let id = get_display_name(item, SIGDN_DESKTOPABSOLUTEPARSING)?;
-                    let name = get_display_name(item, SIGDN_PARENTRELATIVE)?;
                     let item2: IShellItem2 = item.cast()?;
-                    let original_location_variant = item2.GetProperty(&SCID_ORIGINAL_LOCATION)?;
-                    let original_location_bstr = PropVariantToBSTR(&original_location_variant)?;
-                    let original_location = OsString::from_wide(original_location_bstr.as_wide());
+                    let original_parts = original_path_from_recycle_info(&id).and_then(|path| {
+                        let name = path.file_name()?.to_os_string();
+                        let parent = path.parent()?.to_path_buf();
+                        Some((name, parent))
+                    });
+                    let (name, original_parent) = if let Some((name, parent)) = original_parts {
+                        (name, parent)
+                    } else {
+                        // Older or nonstandard Recycle Bin implementations may not expose a
+                        // readable $I metadata file. Retain the Shell-based fallback.
+                        let name = get_display_name(item, SIGDN_PARENTRELATIVE)?;
+                        let original_location_variant =
+                            item2.GetProperty(&SCID_ORIGINAL_LOCATION)?;
+                        let original_location_bstr = PropVariantToBSTR(&original_location_variant)?;
+                        (
+                            name,
+                            PathBuf::from(OsString::from_wide(original_location_bstr.as_wide())),
+                        )
+                    };
                     let date_deleted = get_date_deleted_unix(&item2)?;
 
                     // NTFS paths are valid Unicode according to this chart:
@@ -137,7 +153,7 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                             .into_string()
                             .map_err(|original| Error::ConvertOsString { original })?
                             .into(),
-                        original_parent: PathBuf::from(original_location),
+                        original_parent,
                         time_deleted: date_deleted,
                     });
                 }
@@ -284,6 +300,51 @@ unsafe fn get_display_name(psi: &IShellItem, sigdnname: SIGDN) -> Result<OsStrin
     Ok(result)
 }
 
+fn original_path_from_recycle_info(payload_id: &OsStr) -> Option<PathBuf> {
+    let payload = Path::new(payload_id);
+    let mut info_name: Vec<u16> = payload.file_name()?.encode_wide().collect();
+    if info_name.len() < 2
+        || info_name[0] != b'$' as u16
+        || !matches!(info_name[1], value if value == b'R' as u16 || value == b'r' as u16)
+    {
+        return None;
+    }
+    info_name[1] = b'I' as u16;
+    let info_path = payload
+        .parent()?
+        .join(OsString::from_wide(info_name.as_slice()));
+    parse_recycle_info_original_path(&fs::read(info_path).ok()?)
+}
+
+fn parse_recycle_info_original_path(bytes: &[u8]) -> Option<PathBuf> {
+    let version = u64::from_le_bytes(bytes.get(0..8)?.try_into().ok()?);
+    let (path_offset, path_units) = match version {
+        // Windows Vista through 8.1 use a fixed MAX_PATH UTF-16 field.
+        1 => (24usize, bytes.len().checked_sub(24)? / 2),
+        // Modern Windows stores a UTF-16 code-unit count before a variable field.
+        2 => {
+            let count = u32::from_le_bytes(bytes.get(24..28)?.try_into().ok()?) as usize;
+            (28usize, count)
+        }
+        _ => return None,
+    };
+    let path_bytes = path_units.checked_mul(2)?;
+    let path_end = path_offset.checked_add(path_bytes)?;
+    let encoded = bytes.get(path_offset..path_end)?;
+    let mut wide = Vec::with_capacity(path_units);
+    for pair in encoded.chunks_exact(2) {
+        let value = u16::from_le_bytes([pair[0], pair[1]]);
+        if value == 0 {
+            break;
+        }
+        wide.push(value);
+    }
+    if wide.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(OsString::from_wide(&wide)))
+}
+
 unsafe fn wstr_to_os_string(wstr: PWSTR) -> OsString {
     let mut len = 0;
     while *(wstr.0.offset(len)) != 0 {
@@ -355,4 +416,56 @@ thread_local! {
 }
 fn ensure_com_initialized() {
     CO_INITIALIZER.with(|_| {});
+}
+
+#[cfg(test)]
+mod recycle_info_tests {
+    use super::*;
+
+    fn encoded_path(path: &str) -> Vec<u8> {
+        path.encode_utf16()
+            .chain(std::iter::once(0))
+            .flat_map(u16::to_le_bytes)
+            .collect()
+    }
+
+    #[test]
+    fn parses_version_one_recycle_metadata() {
+        let path = r"C:\old\archive.txt.txt";
+        let mut bytes = vec![0; 24];
+        bytes[0..8].copy_from_slice(&1u64.to_le_bytes());
+        bytes.extend(encoded_path(path));
+
+        assert_eq!(
+            parse_recycle_info_original_path(&bytes),
+            Some(PathBuf::from(path))
+        );
+    }
+
+    #[test]
+    fn parses_version_two_recycle_metadata_with_unicode() {
+        let path = r"C:\old\snowman ☃.txt";
+        let encoded = encoded_path(path);
+        let units = (encoded.len() / 2) as u32;
+        let mut bytes = vec![0; 28];
+        bytes[0..8].copy_from_slice(&2u64.to_le_bytes());
+        bytes[24..28].copy_from_slice(&units.to_le_bytes());
+        bytes.extend(encoded);
+
+        assert_eq!(
+            parse_recycle_info_original_path(&bytes),
+            Some(PathBuf::from(path))
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_or_truncated_recycle_metadata() {
+        assert_eq!(parse_recycle_info_original_path(&[]), None);
+        assert_eq!(parse_recycle_info_original_path(&3u64.to_le_bytes()), None);
+
+        let mut truncated = vec![0; 28];
+        truncated[0..8].copy_from_slice(&2u64.to_le_bytes());
+        truncated[24..28].copy_from_slice(&10u32.to_le_bytes());
+        assert_eq!(parse_recycle_info_original_path(&truncated), None);
+    }
 }

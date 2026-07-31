@@ -31,4 +31,5 @@ jobs:
       # trash-patched is a path dependency rather than a workspace member, so
       # its native Windows unit and doctest suite needs an explicit invocation.
       - name: Test patched trash library on Windows
+        if: always()
         run: cargo test --manifest-path trash-patched/Cargo.toml --no-fail-fast -- --test-threads=1
