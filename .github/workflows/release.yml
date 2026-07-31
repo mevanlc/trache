@@ -39,7 +39,7 @@ jobs:
             os: ubuntu-latest
             cross: true
           - target: x86_64-apple-darwin
-            os: macos-26
+            os: macos-26-intel
             cross: false
           - target: aarch64-apple-darwin
             os: macos-latest
@@ -61,6 +61,17 @@ jobs:
       - name: Install cross
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
+
+      # These suites exercise the host's real Trash/Recycle Bin. Run them
+      # serially so one test cannot restore or purge another test's item.
+      - name: Test trache
+        run: |
+          ${{ matrix.cross && 'cross' || 'cargo' }} test --all --no-fail-fast --target ${{ matrix.target }} -- --test-threads=1
+
+      # trash-patched is a path dependency rather than a workspace member.
+      - name: Test patched trash library
+        run: |
+          ${{ matrix.cross && 'cross' || 'cargo' }} test --manifest-path trash-patched/Cargo.toml --no-fail-fast --target ${{ matrix.target }} -- --test-threads=1
 
       - name: Build
         run: |
