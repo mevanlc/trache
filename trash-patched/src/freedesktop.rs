@@ -1240,7 +1240,12 @@ mod tests {
     }
     impl fmt::Display for SystemTrashError {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "SystemTrashError during a `trash` operation: {:?}", self)
+            match self {
+                Self::NoTrashProgram => f.write_str("No system trash program was found"),
+                Self::Other(error) => {
+                    write!(f, "SystemTrashError during a `trash` operation: {error}")
+                }
+            }
         }
     }
     impl std::error::Error for SystemTrashError {}
