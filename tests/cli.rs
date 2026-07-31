@@ -2,7 +2,7 @@ use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
@@ -13,16 +13,41 @@ fn trache() -> Command {
 
 /// Owns a unique test directory and removes any of its items left in the real
 /// Recycle Bin/Trash before tempfile removes the live directory.
-struct TestDir(TempDir);
+struct TestDir {
+    _temp: TempDir,
+    path: PathBuf,
+}
 
 impl TestDir {
     fn new() -> std::io::Result<Self> {
-        TempDir::new().map(Self)
+        let temp = TempDir::new()?;
+        let path = test_dir_path(temp.path())?;
+        Ok(Self { _temp: temp, path })
     }
 
     fn path(&self) -> &Path {
-        self.0.path()
+        &self.path
     }
+}
+
+#[cfg(target_os = "windows")]
+fn test_dir_path(path: &Path) -> std::io::Result<PathBuf> {
+    let canonical = path.canonicalize()?;
+    let canonical = canonical.to_string_lossy();
+    let shell_path = if let Some(rest) = canonical.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else {
+        canonical
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&canonical)
+            .to_owned()
+    };
+    Ok(PathBuf::from(shell_path))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn test_dir_path(path: &Path) -> std::io::Result<PathBuf> {
+    Ok(path.to_owned())
 }
 
 #[cfg(any(
