@@ -34,9 +34,16 @@ mod os_limited {
     use super::{get_unique_name, init_logging};
     use serial_test::serial;
     use std::collections::{hash_map::Entry, HashMap};
-    use std::ffi::{OsStr, OsString};
+    use std::ffi::OsString;
     use std::fs::File;
 
+    #[cfg(all(
+        unix,
+        not(target_os = "macos"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    ))]
+    use std::ffi::OsStr;
     #[cfg(all(
         unix,
         not(target_os = "macos"),
@@ -54,10 +61,10 @@ mod os_limited {
         init_logging();
 
         let deletion_time = chrono::Utc::now();
-        let actual_unix_deletion_time = deletion_time.naive_utc().timestamp();
+        let actual_unix_deletion_time = deletion_time.naive_utc().and_utc().timestamp();
         assert_eq!(
             actual_unix_deletion_time,
-            deletion_time.naive_local().timestamp()
+            deletion_time.naive_local().and_utc().timestamp()
         );
         let file_name_prefix = get_unique_name();
         let batches: usize = 2;
@@ -113,7 +120,7 @@ mod os_limited {
 
         // Let's try to purge all the items we just created but ignore any errors
         // as this test should succeed as long as `list` works properly.
-        let _ = trash::os_limited::purge_all(items.iter().flat_map(|(_name, item)| item));
+        let _ = trash::os_limited::purge_all(items.values().flatten());
     }
 
     #[cfg(target_os = "windows")]
