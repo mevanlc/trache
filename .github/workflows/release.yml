@@ -2,115 +2,202 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Non-publishing operation
+        type: choice
+        options: [build, verify-oidc]
+        default: build
+      version:
+        description: Version to test in build mode (without v)
+        type: string
+        default: 0.4.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 env:
+  UV_PYTHON: 3.14.8
   CARGO_TERM_COLOR: always
-  GIT_CONFIG_COUNT: '1'
-  GIT_CONFIG_KEY_0: init.defaultBranch
-  GIT_CONFIG_VALUE_0: main
 
 jobs:
-  validate:
-    runs-on: ubuntu-latest
+  version:
+    if: github.event_name == 'push' || inputs.mode == 'build'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      toolchain: ${{ steps.version.outputs.toolchain }}
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Validate version matches tag
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.23
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) doesn't match Cargo.toml ($CARGO_VERSION)"
-            exit 1
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            version=$(uv run scripts/release.py tag "$GITHUB_REF_NAME")
+          else
+            version=$(uv run scripts/release.py version "$INPUT_VERSION")
           fi
-          echo "Version validated: $TAG_VERSION"
+          toolchain=$(uv run scripts/release.py toolchain)
+          {
+            echo "version=$version"
+            echo "toolchain=$toolchain"
+          } >> "$GITHUB_OUTPUT"
 
   build:
-    needs: validate
-    strategy:
-      # Let every platform complete its tests so one failure does not mask the
-      # status of the other release artifacts.
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-          - target: x86_64-apple-darwin
-            os: macos-26-intel
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
 
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        run: |
-          rustup update stable
-          rustup default stable
-          rustup target add ${{ matrix.target }}
-
-      # These suites exercise the host's real Trash/Recycle Bin. Run them
-      # serially so one test cannot restore or purge another test's item.
-      - name: Test trache
-        run: |
-          cargo test --all --no-fail-fast --target ${{ matrix.target }} -- --test-threads=1
-
-      # trash-patched is a path dependency rather than a workspace member.
-      - name: Test patched trash library
-        run: |
-          cargo test --manifest-path trash-patched/Cargo.toml --no-fail-fast --target ${{ matrix.target }} -- --test-threads=1
-
-      - name: Build
-        run: |
-          cargo build --release --target ${{ matrix.target }}
-
-      - name: Package (unix)
-        if: runner.os != 'Windows'
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../trache-${{ matrix.target }}.tar.gz trache
-          cd ../../..
-
-      - name: Package (windows)
-        if: runner.os == 'Windows'
-        run: |
-          cd target/${{ matrix.target }}/release
-          7z a ../../../trache-${{ matrix.target }}.zip trache.exe
-          cd ../../..
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: trache-${{ matrix.target }}
-          path: trache-${{ matrix.target }}.*
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
+  stage:
+    needs: [version, build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
-      actions: read
       contents: write
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Download artifacts
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.23
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: build-*
+          merge-multiple: true
+          path: dist
+      - name: Assemble complete release bundle
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          uv run scripts/release.py stamp "$RELEASE_VERSION"
+          uv run scripts/release.py bundle
+          uv run scripts/release.py verify
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-bundle
+          path: dist/*
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+      - name: Stage or reconcile GitHub draft
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run download "$GITHUB_RUN_ID" --dir artifacts
+        run: uv run scripts/release.py stage
 
-      - name: Create draft release
+  publish:
+    needs: [version, stage]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: crates-io
+    permissions:
+      # GitHub only exposes draft releases to identities with push access.
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.23
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: ${{ needs.version.outputs.toolchain }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-bundle
+          path: dist
+      - name: Reproduce the verified crate before authenticating
         env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          uv run scripts/release.py stamp "$RELEASE_VERSION"
+          uv run scripts/release.py check-package
+      - name: Check for an already published matching crate
+        id: registry
+        run: |
+          published=$(uv run scripts/release.py crate-published)
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+      - name: Select authentication
+        id: credentials
+        env:
+          BOOTSTRAP_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -n "$BOOTSTRAP_TOKEN" ]; then
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Authenticate through trusted publishing
+        if: steps.registry.outputs.published != 'true' && steps.credentials.outputs.bootstrap != 'true'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish or reconcile crate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.credentials.outputs.bootstrap == 'true' && secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+        run: uv run scripts/release.py publish-crate
+
+  finalize:
+    needs: [version, publish]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.23
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-bundle
+          path: dist
+      - name: Publish the complete immutable release
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --draft \
-            --generate-notes \
-            --title "$GITHUB_REF_NAME" \
-            artifacts/*/*
+          uv run scripts/release.py stamp "$RELEASE_VERSION"
+          uv run scripts/release.py finalize
+
+  verify-oidc:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'verify-oidc' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: crates-io
+    permissions:
+      id-token: write
+    steps:
+      - name: Verify token exchange (automatically revoked at job completion)
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5

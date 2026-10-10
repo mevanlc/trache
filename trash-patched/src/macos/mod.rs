@@ -12,7 +12,7 @@ use objc2_foundation::{
     NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask, NSString, NSURL,
 };
 
-use crate::{into_unknown, Error, TrashContext};
+use crate::{Error, TrashContext, into_unknown};
 
 #[derive(Copy, Clone, Debug)]
 /// There are 2 ways to trash files: via the ≝Finder app or via the OS NsFileManager call
@@ -204,14 +204,14 @@ fn delete_using_finder<P: AsRef<Path>>(full_paths: &[P]) -> Result<(), Error> {
             None => {
                 return Err(Error::Unknown {
                     description: format!("The AppleScript exited with error. stderr: {}", stderr),
-                })
+                });
             }
 
             Some(code) => {
                 return Err(Error::Os {
                     code,
                     description: format!("The AppleScript exited with error. stderr: {}", stderr),
-                })
+                });
             }
         };
     }

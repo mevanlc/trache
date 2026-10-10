@@ -87,7 +87,9 @@ impl TrashContext {
                 // and its required subfolders in case they don't exist.
                 move_to_trash(path, &home_trash, topdir)?;
             } else if topdir.to_str() == Some("/var/home") && home_topdir.to_str() == Some("/") {
-                debug!("The topdir is '/var/home' but the home_topdir is '/', moving to the home trash anyway.");
+                debug!(
+                    "The topdir is '/var/home' but the home_topdir is '/', moving to the home trash anyway."
+                );
                 move_to_trash(path, &home_trash, topdir)?;
             } else {
                 execute_on_mounted_trash_folders::<Error, _>(
@@ -161,13 +163,19 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                 Ok(f_type) => f_type,
                 Err(e) => {
                     // Another thread or process may have removed that entry by now
-                    debug!("Tried getting the file type of the trash info `DirEntry` but failed with: {}", e);
+                    debug!(
+                        "Tried getting the file type of the trash info `DirEntry` but failed with: {}",
+                        e
+                    );
                     continue;
                 }
             };
             let info_path = info_entry.path();
             if !file_type.is_file() {
-                warn!("Found an item that's not a file, among the trash info files. This is unexpected. The path to the item is: '{:?}'", info_path);
+                warn!(
+                    "Found an item that's not a file, among the trash info files. This is unexpected. The path to the item is: '{:?}'",
+                    info_path
+                );
                 continue;
             }
             let info_file = match File::open(&info_path) {
@@ -224,7 +232,12 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                         let naive_local = match parsed_time {
                             Ok(t) => t,
                             Err(e) => {
-                                log::error!("Failed to parse the deletion date of the trash item {:?}. The deletion date was '{}'. Parse error was: {:?}", name, value, e);
+                                log::error!(
+                                    "Failed to parse the deletion date of the trash item {:?}. The deletion date was '{}'. Parse error was: {:?}",
+                                    name,
+                                    value,
+                                    e
+                                );
                                 continue 'trash_item;
                             }
                         };
@@ -245,7 +258,10 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
             if let Some(name) = name {
                 if let Some(original_parent) = original_parent {
                     if time_deleted.is_none() {
-                        warn!("Could not determine the deletion time of the trash item. (The `DeletionDate` field is probably missing from the info file.) The info file path is: '{:?}'", info_path);
+                        warn!(
+                            "Could not determine the deletion time of the trash item. (The `DeletionDate` field is probably missing from the info file.) The info file path is: '{:?}'",
+                            info_path
+                        );
                     }
                     result.push(TrashItem {
                         id,
@@ -254,10 +270,16 @@ pub fn list() -> Result<Vec<TrashItem>, Error> {
                         time_deleted: time_deleted.unwrap_or(-1),
                     });
                 } else {
-                    warn!("Could not determine the original parent folder of the trash item. (The `Path` field is probably missing from the info file.) The info file path is: '{:?}'", info_path);
+                    warn!(
+                        "Could not determine the original parent folder of the trash item. (The `Path` field is probably missing from the info file.) The info file path is: '{:?}'",
+                        info_path
+                    );
                 }
             } else {
-                warn!("Could not determine the name of the trash item. (The `Path` field is probably missing from the info file.) The info file path is: '{:?}'", info_path);
+                warn!(
+                    "Could not determine the name of the trash item. (The `Path` field is probably missing from the info file.) The info file path is: '{:?}'",
+                    info_path
+                );
             }
         }
     }
@@ -635,7 +657,10 @@ fn move_to_trash(
                 );
                 // Try to delete the info file
                 if let Err(info_err) = std::fs::remove_file(info_file_path) {
-                    warn!("Created the trash info file, then failed to move the item to the trash. So far it's OK, but then failed remove the initial info file. There's either a bug in this program or another faulty program is manupulating the Trash. The error was: {:?}", info_err);
+                    warn!(
+                        "Created the trash info file, then failed to move the item to the trash. So far it's OK, but then failed remove the initial info file. There's either a bug in this program or another faulty program is manupulating the Trash. The error was: {:?}",
+                        info_err
+                    );
                 }
                 if error.is_already_exists() {
                     continue;
@@ -775,17 +800,17 @@ fn folder_validity(path: impl AsRef<Path>) -> Result<TrashValidity, FsError> {
 /// Corresponds to the definition of "home_trash" from
 /// https://specifications.freedesktop.org/trash-spec/trashspec-1.0.html
 fn home_trash() -> Result<PathBuf, Error> {
-    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
-        if !data_home.is_empty() {
-            let data_home_path = AsRef::<Path>::as_ref(data_home.as_os_str());
-            return Ok(data_home_path.join("Trash"));
-        }
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME")
+        && !data_home.is_empty()
+    {
+        let data_home_path = AsRef::<Path>::as_ref(data_home.as_os_str());
+        return Ok(data_home_path.join("Trash"));
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        if !home.is_empty() {
-            let home_path = AsRef::<Path>::as_ref(home.as_os_str());
-            return Ok(home_path.join(".local/share/Trash"));
-        }
+    if let Some(home) = std::env::var_os("HOME")
+        && !home.is_empty()
+    {
+        let home_path = AsRef::<Path>::as_ref(home.as_os_str());
+        return Ok(home_path.join(".local/share/Trash"));
     }
     Err(Error::Unknown {
         description: "Neither the XDG_DATA_HOME nor the HOME environment variable was found".into(),
@@ -793,17 +818,17 @@ fn home_trash() -> Result<PathBuf, Error> {
 }
 
 fn home_topdir(mnt_points: &[MountPoint]) -> Result<PathBuf, Error> {
-    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
-        if !data_home.is_empty() {
-            let data_home_path = AsRef::<Path>::as_ref(data_home.as_os_str());
-            return Ok(get_first_topdir_containing_path(data_home_path, mnt_points).to_owned());
-        }
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME")
+        && !data_home.is_empty()
+    {
+        let data_home_path = AsRef::<Path>::as_ref(data_home.as_os_str());
+        return Ok(get_first_topdir_containing_path(data_home_path, mnt_points).to_owned());
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        if !home.is_empty() {
-            let home_path = AsRef::<Path>::as_ref(home.as_os_str());
-            return Ok(get_first_topdir_containing_path(home_path, mnt_points).to_owned());
-        }
+    if let Some(home) = std::env::var_os("HOME")
+        && !home.is_empty()
+    {
+        let home_path = AsRef::<Path>::as_ref(home.as_os_str());
+        return Ok(get_first_topdir_containing_path(home_path, mnt_points).to_owned());
     }
     Err(Error::Unknown {
         description: "Neither the XDG_DATA_HOME nor the HOME environment variable was found".into(),
@@ -902,6 +927,13 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
         });
     }
     Ok(result)
+}
+
+fn fs_error(path: impl Into<PathBuf>, source: std::io::Error) -> Error {
+    Error::FileSystem {
+        path: path.into(),
+        source,
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -1070,7 +1102,7 @@ fn get_mount_points() -> Result<Vec<MountPoint>, Error> {
 mod tests {
     use serial_test::serial;
     use std::{
-        collections::{hash_map::Entry, HashMap},
+        collections::{HashMap, hash_map::Entry},
         env,
         ffi::{OsStr, OsString},
         fmt,
@@ -1083,11 +1115,10 @@ mod tests {
     use log::warn;
 
     use crate::{
-        canonicalize_paths, delete, delete_all,
+        Error, canonicalize_paths, delete, delete_all,
         os_limited::{list, purge_all, restore_all},
         platform::encode_uri_path,
         tests::get_unique_name,
-        Error,
     };
 
     use super::decode_uri_path;
@@ -1111,7 +1142,9 @@ mod tests {
             let result = delete_all_using_system_program(&names);
             if let Err(SystemTrashError::NoTrashProgram) = &result {
                 // For example may be the case on build systems that don't have a destop environment
-                warn!("No system default trashing utility was found, using this crate's implementation");
+                warn!(
+                    "No system default trashing utility was found, using this crate's implementation"
+                );
                 delete_all(&names).unwrap();
             } else {
                 result.unwrap();
@@ -1359,10 +1392,10 @@ mod tests {
                     "Unity" => {
                         // gnome-fallback sessions set XDG_CURRENT_DESKTOP to Unity
                         // DESKTOP_SESSION can be gnome-fallback or gnome-fallback-compiz
-                        if let Ok(desktop_session) = env::var("DESKTOP_SESSION") {
-                            if desktop_session.contains("gnome-fallback") {
-                                return DesktopEnvironment::Gnome;
-                            }
+                        if let Ok(desktop_session) = env::var("DESKTOP_SESSION")
+                            && desktop_session.contains("gnome-fallback")
+                        {
+                            return DesktopEnvironment::Gnome;
                         }
                         return DesktopEnvironment::Unity;
                     }
@@ -1373,10 +1406,10 @@ mod tests {
                         return DesktopEnvironment::Cinnamon;
                     }
                     "KDE" => {
-                        if let Ok(kde_session) = env::var(KDE_SESSION_ENV_VAR) {
-                            if kde_session == "5" {
-                                return DesktopEnvironment::Kde5;
-                            }
+                        if let Ok(kde_session) = env::var(KDE_SESSION_ENV_VAR)
+                            && kde_session == "5"
+                        {
+                            return DesktopEnvironment::Kde5;
                         }
                         return DesktopEnvironment::Kde4;
                     }
@@ -1429,12 +1462,5 @@ mod tests {
         }
 
         DesktopEnvironment::Other
-    }
-}
-
-fn fs_error(path: impl Into<PathBuf>, source: std::io::Error) -> Error {
-    Error::FileSystem {
-        path: path.into(),
-        source,
     }
 }

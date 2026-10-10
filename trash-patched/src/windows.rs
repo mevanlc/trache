@@ -1,7 +1,7 @@
 use crate::{Error, TrashContext, TrashItem, TrashItemMetadata, TrashItemSize};
 use std::{
     borrow::Borrow,
-    ffi::{c_void, OsStr, OsString},
+    ffi::{OsStr, OsString, c_void},
     fs,
     os::windows::{ffi::OsStrExt, prelude::*},
     path::{Path, PathBuf},
@@ -11,8 +11,8 @@ use windows::Win32::{
     UI::Shell::PropertiesSystem::*, UI::Shell::*,
 };
 use windows::{
-    core::{Interface, PCWSTR, PWSTR},
     Win32::System::Com::StructuredStorage::PropVariantToBSTR,
+    core::{Interface, PCWSTR, PWSTR},
 };
 
 const SCID_ORIGINAL_LOCATION: PROPERTYKEY = PROPERTYKEY {
@@ -294,10 +294,12 @@ where
 }
 
 unsafe fn get_display_name(psi: &IShellItem, sigdnname: SIGDN) -> Result<OsString, Error> {
-    let name = psi.GetDisplayName(sigdnname)?;
-    let result = wstr_to_os_string(name);
-    CoTaskMemFree(Some(name.0 as *const c_void));
-    Ok(result)
+    unsafe {
+        let name = psi.GetDisplayName(sigdnname)?;
+        let result = wstr_to_os_string(name);
+        CoTaskMemFree(Some(name.0 as *const c_void));
+        Ok(result)
+    }
 }
 
 fn original_path_from_recycle_info(payload_id: &OsStr) -> Option<PathBuf> {
@@ -332,7 +334,7 @@ fn parse_recycle_info_original_path(bytes: &[u8]) -> Option<PathBuf> {
     let path_end = path_offset.checked_add(path_bytes)?;
     let encoded = bytes.get(path_offset..path_end)?;
     let mut wide = Vec::with_capacity(path_units);
-    for pair in encoded.chunks_exact(2) {
+    for pair in encoded.as_chunks::<2>().0 {
         let value = u16::from_le_bytes([pair[0], pair[1]]);
         if value == 0 {
             break;
@@ -346,25 +348,29 @@ fn parse_recycle_info_original_path(bytes: &[u8]) -> Option<PathBuf> {
 }
 
 unsafe fn wstr_to_os_string(wstr: PWSTR) -> OsString {
-    let mut len = 0;
-    while *(wstr.0.offset(len)) != 0 {
-        len += 1;
+    unsafe {
+        let mut len = 0;
+        while *(wstr.0.offset(len)) != 0 {
+            len += 1;
+        }
+        let wstr_slice = std::slice::from_raw_parts(wstr.0, len as usize);
+        OsString::from_wide(wstr_slice)
     }
-    let wstr_slice = std::slice::from_raw_parts(wstr.0, len as usize);
-    OsString::from_wide(wstr_slice)
 }
 
 unsafe fn get_date_deleted_unix(item: &IShellItem2) -> Result<i64, Error> {
-    /// January 1, 1970 as Windows file time
-    const EPOCH_AS_FILETIME: u64 = 116444736000000000;
-    const HUNDREDS_OF_NANOSECONDS: u64 = 10000000;
+    unsafe {
+        /// January 1, 1970 as Windows file time
+        const EPOCH_AS_FILETIME: u64 = 116444736000000000;
+        const HUNDREDS_OF_NANOSECONDS: u64 = 10000000;
 
-    let time = item.GetFileTime(&SCID_DATE_DELETED)?;
-    let time_u64 = ((time.dwHighDateTime as u64) << 32) | (time.dwLowDateTime as u64);
-    let rel_to_linux_epoch = time_u64 - EPOCH_AS_FILETIME;
-    let seconds_since_unix_epoch = rel_to_linux_epoch / HUNDREDS_OF_NANOSECONDS;
+        let time = item.GetFileTime(&SCID_DATE_DELETED)?;
+        let time_u64 = ((time.dwHighDateTime as u64) << 32) | (time.dwLowDateTime as u64);
+        let rel_to_linux_epoch = time_u64 - EPOCH_AS_FILETIME;
+        let seconds_since_unix_epoch = rel_to_linux_epoch / HUNDREDS_OF_NANOSECONDS;
 
-    Ok(seconds_since_unix_epoch as i64)
+        Ok(seconds_since_unix_epoch as i64)
+    }
 }
 
 struct CoInitializer {}
@@ -379,7 +385,10 @@ impl CoInitializer {
             0 = "THIS IS AN ERROR ON PURPOSE. Either the `coinit_multithreaded` or the `coinit_apartmentthreaded` feature must be specified";
         }
         let mut init_mode;
-        #[cfg(feature = "coinit_multithreaded")]
+        #[cfg(all(
+            feature = "coinit_multithreaded",
+            not(feature = "coinit_apartmentthreaded")
+        ))]
         {
             init_mode = COINIT_MULTITHREADED;
         }
@@ -397,7 +406,10 @@ impl CoInitializer {
         }
         let hr = unsafe { CoInitializeEx(None, init_mode) };
         if hr.is_err() {
-            panic!("Call to CoInitializeEx failed. HRESULT: {:?}. Consider using `trash` with the feature `coinit_multithreaded`", hr);
+            panic!(
+                "Call to CoInitializeEx failed. HRESULT: {:?}. Consider using `trash` with the feature `coinit_multithreaded`",
+                hr
+            );
         }
         CoInitializer {}
     }

@@ -379,7 +379,7 @@ pub mod os_limited {
         hash::{Hash, Hasher},
     };
 
-    use super::{platform, Error, TrashItem, TrashItemMetadata};
+    use super::{Error, TrashItem, TrashItemMetadata, platform};
 
     /// Returns all [`TrashItem`]s that are currently in the trash.
     ///

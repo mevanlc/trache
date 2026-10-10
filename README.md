@@ -8,6 +8,22 @@ Because...
 * ...has `rm -W` ever worked for anyone? Probably not?
 * ...the only advice the `rm` man-page gives you about data recovery is that "you might be able to recover the data after using `rm` on it, so consider using `shred` instead."
 
+## Install
+
+Download an archive from [GitHub Releases](https://github.com/mevanlc/trache/releases)
+and put `trache` on your PATH. The new release workflow builds Linux (static musl),
+macOS, Windows, and FreeBSD for x64 and ARM64, plus Android ARM64. Android execution
+is not covered by hosted CI; FreeBSD downloads are tested on 15.1.
+
+Install from crates.io with `cargo install trache --locked`. For a checkout:
+
+```sh
+cargo install --path . --locked
+```
+
+See [RELEASING.md](RELEASING.md) for CI, publishing, checksums, and release recovery.
+Versions come from release tags; checkout builds report `0.0.0`.
+
 ## Usage
 
 Put it on your PATH and alias it to `rm`. Or don't put it on your PATH and use it like `trash`. I'm not your life-coach.

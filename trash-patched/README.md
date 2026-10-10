@@ -1,3 +1,13 @@
+# Vendored trash backend
+
+These patched `trash` 5.2.5 sources are compiled as trache's `trash` library
+from the root `Cargo.toml` and shipped in the same crate. Upstream metadata is
+kept for reference; this directory is not a separate Cargo package. Run tests
+from the repository root, serially. See [RELEASING.md](../RELEASING.md).
+
+The original upstream README follows.
+
+---
 
 [![Crates.io](https://img.shields.io/crates/v/trash?color=mediumvioletred)](https://crates.io/crates/trash)
 [![Docs.rs](https://docs.rs/trash/badge.svg)](https://docs.rs/trash)

@@ -33,7 +33,7 @@ pub use utils::{get_unique_name, init_logging};
 mod os_limited {
     use super::{get_unique_name, init_logging};
     use serial_test::serial;
-    use std::collections::{hash_map::Entry, HashMap};
+    use std::collections::{HashMap, hash_map::Entry};
     use std::ffi::OsString;
     use std::fs::File;
 
@@ -107,8 +107,7 @@ mod os_limited {
                             if diff > MAX_SECONDS_DIFFERENCE {
                                 panic!(
                                     "The deleted item does not have the timestamp that represents its deletion time. Expected: {}. Got: {}",
-                                    actual_unix_deletion_time,
-                                    item.time_deleted
+                                    actual_unix_deletion_time, item.time_deleted
                                 );
                             }
                         }
@@ -330,7 +329,9 @@ mod os_limited {
                 for path in names.iter() {
                     std::fs::remove_file(path).ok();
                 }
-                panic!("restore_all was expected to return `trash::ErrorKind::RestoreCollision` but did not.");
+                panic!(
+                    "restore_all was expected to return `trash::ErrorKind::RestoreCollision` but did not."
+                );
             }
         };
         let remaining = trash::os_limited::list()

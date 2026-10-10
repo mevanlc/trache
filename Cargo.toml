@@ -1,12 +1,35 @@
 [package]
 name = "trache"
-version = "0.3.0"
+version = "0.0.0"
 edition = "2024"
 description = "A CLI for moving files to trash"
 license = "MIT"
+repository = "https://github.com/mevanlc/trache"
+readme = "README.md"
+keywords = ["trash", "recycle-bin", "rm", "cli"]
+categories = ["command-line-utilities", "filesystem"]
+autobins = false
+include = ["/src/**", "/tests/**", "/trash-patched/**", "/licenses/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/RELEASING.md", "/LICENSE"]
+
+# Ship the patched backend with trache, including in crates.io installations.
+[lib]
+name = "trash"
+path = "trash-patched/src/lib.rs"
+
+[[bin]]
+name = "trache"
+path = "src/main.rs"
+
+[features]
+default = ["coinit_apartmentthreaded", "chrono"]
+chrono = []
+coinit_apartmentthreaded = []
+coinit_multithreaded = []
+coinit_disable_ole1dde = []
+coinit_speed_over_memory = []
 
 [dependencies]
-trash = { path = "trash-patched" }
+log = "0.4"
 bytesize = "2"
 clap = { version = "4", features = ["derive"] }
 chrono = "0.4"
@@ -16,7 +39,25 @@ regex = "1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))'.dependencies]
+once_cell = "1.18.0"
+scopeguard = "1.2.0"
+urlencoding = "2.1.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSFileManager", "NSPathUtilities", "NSString", "NSURL"] }
+percent-encoding = "2.3.1"
+
+[target.'cfg(windows)'.dependencies]
+scopeguard = "1.2.0"
+windows = { version = "0.56.0", features = ["Win32_Foundation", "Win32_Storage_EnhancedStorage", "Win32_System_Com_StructuredStorage", "Win32_System_SystemServices", "Win32_UI_Shell_PropertiesSystem"] }
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+defer = "0.2.1"
+env_logger = "0.10.0"
+once_cell = "1.18.0"
+serial_test = { version = "2.0.0", default-features = false }
