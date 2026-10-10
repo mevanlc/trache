@@ -228,6 +228,13 @@ jobs:
           run: |
             set -eu
             export PATH="$HOME/.cargo/bin:$PATH"
+            # gio rejects the runner work directory as a system-internal mount.
+            # Run the trash interoperability tests beside the VM user's home trash.
+            workspace=$PWD
+            build_directory=$(mktemp -d "$HOME/trache-build.XXXXXX")
+            trap 'rm -rf "$build_directory"' 0
+            cp -R "$workspace/." "$build_directory"
+            cd "$build_directory"
             cargo clippy --locked --all-targets --all-features --target '${{ matrix.target }}' -- -D warnings
             if [ '${{ matrix.arch }}' = x86_64 ]; then
               cargo nextest run --locked --all-targets --all-features --test-threads 1 --target '${{ matrix.target }}'
@@ -237,6 +244,8 @@ jobs:
             fi
             cargo test --doc --locked --all-features --target '${{ matrix.target }}' -- --test-threads=1
             cargo build --bins --release --locked --target '${{ matrix.target }}'
+            mkdir -p "$workspace/target/${{ matrix.target }}/release"
+            cp 'target/${{ matrix.target }}/release/trache' "$workspace/target/${{ matrix.target }}/release/"
       - name: Package binaries
         env:
           TARGET: ${{ matrix.target }}

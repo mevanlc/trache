@@ -83,6 +83,9 @@ The eight desktop/server targets execute tests and smoke-test the extracted
 download with `--help` and `--version`. FreeBSD x64 and ARM64 build and test
 inside FreeBSD 15.1 VMs; the extracted downloads also exercise dry runs,
 trashing, restoration, and purging using a temporary trash directory. FreeBSD
+x64 and ARM64 run tests from a temporary source copy in the VM user's home
+directory so `gio` can use the same filesystem as its home trash.
+FreeBSD
 x64 uses nextest; ARM64 uses `cargo test` because nextest does not publish a
 FreeBSD ARM64 binary. ARM64 installs the pinned Rust toolchain from its official
 standalone archive because rustup does not publish an installer for that target.
