@@ -1,4 +1,6 @@
 mod interact;
+#[cfg(target_os = "macos")]
+mod macos_trash;
 #[cfg(any(
     target_os = "windows",
     all(unix, not(target_os = "macos"), not(target_os = "ios"))
@@ -19,9 +21,10 @@ use interact::{
     CollisionChoice, TwinChoice, TwinInfo, collision_choice_name, find_untrash_range,
     format_untrash_range, prompt_collision, prompt_selection, prompt_twins, untrash_name,
 };
-use trash::TrashContext;
 #[cfg(target_os = "macos")]
-use trash::macos::TrashContextExtMacos;
+use macos_trash::Backend as TrashBackend;
+#[cfg(not(target_os = "macos"))]
+use trash::TrashContext as TrashBackend;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 enum InteractiveMode {
@@ -381,6 +384,9 @@ struct Cli {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    macos_trash::run_if_worker();
+
     // Reset SIGPIPE to default behavior (terminate silently) so piping to
     // tools like `head` or `grep` doesn't cause a panic
     #[cfg(unix)]
@@ -470,14 +476,6 @@ fn main() {
     }
 }
 
-fn new_trash_ctx() -> TrashContext {
-    #[allow(unused_mut)]
-    let mut ctx = TrashContext::new();
-    #[cfg(target_os = "macos")]
-    ctx.set_delete_method(trash::macos::DeleteMethod::NsFileManager);
-    ctx
-}
-
 fn trash_files(
     input: &mut dyn BufRead,
     files: &[PathBuf],
@@ -506,6 +504,7 @@ fn trash_files(
         }
     }
 
+    let mut backend = TrashBackend::default();
     for file in files {
         // Reject paths ending in . or ..
         match file.components().next_back() {
@@ -536,13 +535,21 @@ fn trash_files(
             continue;
         }
 
-        if let Err(e) = trash_single(input, file, opts, prompt_once_triggered)
-            && (!opts.force || file.symlink_metadata().is_ok())
-        {
-            eprintln!("trache: cannot remove '{}': {}", file.display(), e);
-            had_error = true;
+        if let Err(e) = trash_single(input, file, opts, prompt_once_triggered, &mut backend) {
+            #[cfg(target_os = "macos")]
+            if e.downcast_ref::<macos_trash::TransportError>().is_some() {
+                backend.finish();
+                return Err(format!("cannot remove '{}': {e}", file.display()).into());
+            }
+            if !opts.force || file.symlink_metadata().is_ok() {
+                eprintln!("trache: cannot remove '{}': {}", file.display(), e);
+                had_error = true;
+            }
         }
     }
+
+    #[cfg(target_os = "macos")]
+    backend.finish();
 
     if had_error {
         Err("some files could not be removed".into())
@@ -556,6 +563,7 @@ fn trash_single(
     file: &PathBuf,
     opts: &TrashOptions,
     already_prompted: bool,
+    backend: &mut TrashBackend,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let metadata = match file.symlink_metadata() {
         Ok(m) => m,
@@ -584,7 +592,7 @@ fn trash_single(
             if opts.dry_run {
                 println!("would trash '{}'", file.display());
             } else {
-                new_trash_ctx().delete(file)?;
+                backend.delete(file)?;
                 if opts.verbose {
                     println!("trashed '{}'", file.display());
                 }
@@ -600,7 +608,7 @@ fn trash_single(
                 if opts.dry_run {
                     println!("would trash '{}'", file.display());
                 } else {
-                    new_trash_ctx().delete(file)?;
+                    backend.delete(file)?;
                     if opts.verbose {
                         println!("trashed '{}'", file.display());
                     }
@@ -626,7 +634,7 @@ fn trash_single(
         if opts.dry_run {
             println!("would trash '{}'", file.display());
         } else {
-            new_trash_ctx().delete(file)?;
+            backend.delete(file)?;
             if opts.verbose {
                 println!("trashed '{}'", file.display());
             }

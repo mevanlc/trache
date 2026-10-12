@@ -69,7 +69,16 @@ Options:
 
 # Limitations
 
-Trash restoration is unsupported on macOS. PRs welcome.
+On macOS, trache keeps a temporary copy of itself running after trashing files so
+Apple's delayed Finder **Put Back** metadata can finish writing. Your prompt returns
+as soon as the moves finish. The helper reads the actual Trash directories' `.DS_Store`
+files without modifying them, waits at least three seconds after the last move, and
+checks for up to ten seconds after finishing its work. Put Back remains best effort;
+missing or unreadable metadata does not change the command's exit status. If the
+helper cannot start, trache performs the work and wait in the foreground.
+
+Restoration through trache's `--trash-undo` is still unsupported on macOS. Finder's
+Put Back is separate from that command.
 
 On Windows, `--trash-stats` and `--trash-empty --trash-dry-run` report exact sizes for top-level
 files. Directory sizes are not recursively measured yet, so groups containing directories or

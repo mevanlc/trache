@@ -1,6 +1,9 @@
 use std::{
-    ffi::{CString, OsString},
+    ffi::{CStr, CString, OsString},
+    fs::{self, Metadata},
+    os::macos::fs::MetadataExt as _,
     os::raw::c_char,
+    os::unix::{ffi::OsStringExt, fs::MetadataExt as _},
     path::{Path, PathBuf},
     process::Command,
     ptr::NonNull,
@@ -19,7 +22,7 @@ use crate::{Error, TrashContext, into_unknown};
 ///
 ///   | <br>Feature            |≝<br>Finder     |<br>NsFileManager |
 ///   |:-----------------------|:--------------:|:----------------:|
-///   |Undo via "Put back"     | ✓              | ✗                |
+///   |Undo via "Put back"     | ✓              | Best effort; delayed flush |
 ///   |Speed                   | ✗<br>Slower    | ✓<br>Faster      |
 ///   |No sound                | ✗              | ✓                |
 ///   |No extra permissions    | ✗              | ✓                |
@@ -39,8 +42,9 @@ pub enum DeleteMethod {
     /// - Somewhat faster than the `Finder` method
     /// - Does *not* require additional permissions
     /// - Does *not* produce the sound that Finder usually makes when deleting a file
-    /// - Does *not* show the "Put Back" option on some systems (the file may be restored by for
-    ///   example dragging out from the Trash folder). This is a macOS bug. Read more about it
+    /// - Put Back metadata can be flushed asynchronously. Short-lived callers must keep the
+    ///   process alive after deletion; trache does this in a temporary helper. Metadata is
+    ///   still best effort on affected macOS versions. Read more about it
     ///   at:
     ///   - <https://github.com/sindresorhus/macos-trash/issues/4>
     ///   - <https://github.com/ArturKovacs/trash-rs/issues/14>
@@ -90,32 +94,105 @@ impl TrashContext {
 }
 
 fn delete_using_file_mgr<P: AsRef<Path>>(full_paths: &[P]) -> Result<(), Error> {
-    trace!("Starting delete_using_file_mgr");
     let file_mgr = NSFileManager::defaultManager();
     for path in full_paths {
-        let original_path = path.as_ref();
-
-        trace!("Starting delete_url_for_path");
-        let url = delete_url_for_path(original_path);
-        trace!("Finished delete_url_for_path");
-
-        let trash_check_url = file_url_for_path(trash_availability_check_path(original_path))?;
-        ensure_volume_trash_available(&file_mgr, original_path, &trash_check_url)?;
-
-        trace!("Calling trashItemAtURL");
-        let res = file_mgr.trashItemAtURL_resultingItemURL_error(&url, None);
-        trace!("Finished trashItemAtURL");
-
-        if let Err(err) = res {
-            return Err(Error::Unknown {
-                description: format!(
-                    "While deleting '{}', `trashItemAtURL` failed: {err}",
-                    original_path.display()
-                ),
-            });
-        }
+        delete_one_with_file_manager(&file_mgr, path.as_ref())?;
     }
     Ok(())
+}
+
+/// Filesystem identity, including birth time to distinguish reused inode numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileIdentity {
+    pub device: u64,
+    pub inode: u64,
+    pub birth_seconds: i64,
+    pub birth_nanoseconds: i64,
+}
+
+impl FileIdentity {
+    pub fn from_metadata(metadata: &Metadata) -> Self {
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            birth_seconds: metadata.st_birthtime(),
+            birth_nanoseconds: metadata.st_birthtime_nsec(),
+        }
+    }
+}
+
+/// A successful FileManager move and the information needed to observe Put Back metadata.
+/// Missing optional information does not mean the move failed.
+#[derive(Clone, Debug)]
+pub struct TrashReceipt {
+    pub original_path: PathBuf,
+    pub original_parent_identity: Option<FileIdentity>,
+    pub volume_root: Option<PathBuf>,
+    pub trashed_path: Option<PathBuf>,
+    pub trashed_identity: Option<FileIdentity>,
+}
+
+/// Trash one item with FileManager, returning its actual destination (including renames).
+/// This does not wait for Apple's asynchronous Put Back metadata flush.
+pub fn delete_with_file_manager(path: impl AsRef<Path>) -> Result<TrashReceipt, Error> {
+    let paths = crate::canonicalize_paths([path])?;
+    objc2::rc::autoreleasepool(|_| {
+        delete_one_with_file_manager(&NSFileManager::defaultManager(), &paths[0])
+    })
+}
+
+fn delete_one_with_file_manager(
+    file_mgr: &NSFileManager,
+    original_path: &Path,
+) -> Result<TrashReceipt, Error> {
+    let parent = original_path.parent().ok_or(Error::TargetedRoot)?;
+    let original_parent_identity = fs::metadata(parent)
+        .ok()
+        .as_ref()
+        .map(FileIdentity::from_metadata);
+    let volume_root = volume_root(parent);
+    let url = delete_url_for_path(original_path);
+    let trash_check_url = file_url_for_path(trash_availability_check_path(original_path))?;
+    ensure_volume_trash_available(file_mgr, original_path, &trash_check_url)?;
+    let mut destination = None;
+    trace!("Calling trashItemAtURL");
+    file_mgr
+        .trashItemAtURL_resultingItemURL_error(&url, Some(&mut destination))
+        .map_err(|err| Error::Unknown {
+            description: format!(
+                "While deleting '{}', `trashItemAtURL` failed: {err}",
+                original_path.display()
+            ),
+        })?;
+    let trashed_path = destination.map(|url| {
+        // The file URL owns this NUL-terminated representation; copy it before releasing it.
+        let bytes = unsafe { CStr::from_ptr(url.fileSystemRepresentation().as_ptr()) }.to_bytes();
+        PathBuf::from(OsString::from_vec(bytes.to_vec()))
+    });
+    let trashed_identity = trashed_path
+        .as_ref()
+        .and_then(|p| fs::symlink_metadata(p).ok())
+        .as_ref()
+        .map(FileIdentity::from_metadata);
+    Ok(TrashReceipt {
+        original_path: original_path.to_owned(),
+        original_parent_identity,
+        volume_root,
+        trashed_path,
+        trashed_identity,
+    })
+}
+
+fn volume_root(path: &Path) -> Option<PathBuf> {
+    let path = CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
+    let mut info = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // statfs initializes the structure on success, including its NUL-terminated mount path.
+    if unsafe { libc::statfs(path.as_ptr(), info.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let info = unsafe { info.assume_init() };
+    let bytes = unsafe { CStr::from_ptr(info.f_mntonname.as_ptr()) }.to_bytes();
+    Some(PathBuf::from(OsString::from_vec(bytes.to_vec())))
 }
 
 fn delete_url_for_path(path: &Path) -> Retained<NSURL> {

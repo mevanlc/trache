@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
+#[cfg(target_os = "macos")]
+#[path = "support/macos.rs"]
+mod macos_support;
+
 fn trache() -> Command {
     cargo_bin_cmd!("trache")
 }
@@ -61,6 +65,13 @@ impl Drop for TestDir {
             .arg("--trash-purge")
             .arg(format!(r"full:path:regex:{root}(?:[\\/].*)?"))
             .output();
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        macos_support::cleanup(self.path());
     }
 }
 
