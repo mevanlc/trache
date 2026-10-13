@@ -1,6 +1,7 @@
 //! A short-lived, re-executed copy of trache owns FileManager's asynchronous flushes.
 
-mod ds_store;
+pub(crate) mod ds_store;
+pub(crate) mod inventory;
 mod observer;
 mod protocol;
 

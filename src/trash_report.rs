@@ -15,23 +15,31 @@ use std::{fs, path::Path};
 #[derive(Debug)]
 pub(crate) struct TrashReport {
     groups: Vec<TrashGroupReport>,
+    enumeration_complete: bool,
 }
 
 #[derive(Debug)]
 struct TrashGroupReport {
     label: String,
     items: Vec<TrashItemReport>,
+    enumeration_complete: bool,
 }
 
 #[derive(Debug)]
 struct TrashItemReport {
     original_path: PathBuf,
     size: ReportedSize,
+    #[cfg(target_os = "macos")]
+    actual_path: bool,
+    #[cfg(target_os = "macos")]
+    hint: Option<crate::macos_trash::ds_store::PutBack>,
 }
 
 #[derive(Debug)]
 enum ReportedSize {
     Exact(u64),
+    #[cfg(target_os = "macos")]
+    Partial(u64),
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Unavailable(UnsizedReason),
 }
@@ -50,6 +58,8 @@ struct TrashRollup {
     known_bytes: u64,
     unavailable_count: usize,
     unavailable_directories: usize,
+    partial_count: usize,
+    count_incomplete: bool,
 }
 
 impl TrashReport {
@@ -60,17 +70,25 @@ impl TrashReport {
                 .items
                 .sort_by(|left, right| left.original_path.cmp(&right.original_path));
         }
-        Self { groups }
+        Self {
+            groups,
+            enumeration_complete: true,
+        }
     }
 
     fn rollup(&self) -> io::Result<TrashRollup> {
-        rollup_items(self.groups.iter().flat_map(|group| &group.items))
+        let mut rollup = rollup_items(self.groups.iter().flat_map(|group| &group.items))?;
+        rollup.count_incomplete = !self.enumeration_complete
+            || self.groups.iter().any(|group| !group.enumeration_complete);
+        Ok(rollup)
     }
 }
 
 impl TrashGroupReport {
     fn rollup(&self) -> io::Result<TrashRollup> {
-        rollup_items(&self.items)
+        let mut rollup = rollup_items(&self.items)?;
+        rollup.count_incomplete = !self.enumeration_complete;
+        Ok(rollup)
     }
 }
 
@@ -85,6 +103,14 @@ fn rollup_items<'a>(
             .checked_add(1)
             .ok_or_else(|| io::Error::other("trash item count exceeds usize"))?;
         match &item.size {
+            #[cfg(target_os = "macos")]
+            ReportedSize::Partial(bytes) => {
+                rollup.known_bytes = rollup
+                    .known_bytes
+                    .checked_add(*bytes)
+                    .ok_or_else(|| io::Error::other("trash size exceeds u64"))?;
+                rollup.partial_count += 1;
+            }
             ReportedSize::Exact(bytes) => {
                 rollup.known_bytes = rollup
                     .known_bytes
@@ -108,6 +134,18 @@ fn format_size(bytes: u64) -> String {
 }
 
 fn format_rollup(rollup: TrashRollup) -> String {
+    if rollup.count_incomplete || rollup.partial_count > 0 {
+        let count_prefix = if rollup.count_incomplete {
+            "at least "
+        } else {
+            ""
+        };
+        return format!(
+            "{count_prefix}{} item(s), at least {} (incomplete)",
+            rollup.item_count,
+            format_size(rollup.known_bytes)
+        );
+    }
     if rollup.unavailable_count == 0 {
         return format!(
             "{} item(s), {}",
@@ -144,7 +182,24 @@ fn format_rollup(rollup: TrashRollup) -> String {
 }
 
 fn write_item<W: Write>(writer: &mut W, item: &TrashItemReport) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    if item.actual_path {
+        let size = match item.size {
+            ReportedSize::Exact(bytes) => format_size(bytes),
+            ReportedSize::Partial(bytes) => format!("at least {} (incomplete)", format_size(bytes)),
+            ReportedSize::Unavailable(_) => "?".into(),
+        };
+        writeln!(writer, "    {size:>10}  {:?}", item.original_path)?;
+        return crate::macos_trash::inventory::write_hint(writer, item.hint.as_ref());
+    }
     match &item.size {
+        #[cfg(target_os = "macos")]
+        ReportedSize::Partial(bytes) => writeln!(
+            writer,
+            "    at least {}  {} (incomplete)",
+            format_size(*bytes),
+            item.original_path.display()
+        ),
         ReportedSize::Exact(bytes) => writeln!(
             writer,
             "    {:>10}  {}",
@@ -180,7 +235,7 @@ fn write_trash_report<W: Write>(
     verbose: bool,
     total_label: &str,
 ) -> io::Result<()> {
-    if report.groups.is_empty() {
+    if report.groups.is_empty() && report.enumeration_complete {
         writeln!(writer, "No trash directories found.")?;
         return Ok(());
     }
@@ -284,6 +339,7 @@ fn collect_freedesktop_trash_report(
         .map(|(folder, items)| TrashGroupReport {
             label: folder.display().to_string(),
             items,
+            enumeration_complete: true,
         })
         .collect();
     Ok(TrashReport::new(groups))
@@ -379,7 +435,11 @@ where
     TrashReport::new(
         by_volume
             .into_iter()
-            .map(|(label, items)| TrashGroupReport { label, items })
+            .map(|(label, items)| TrashGroupReport {
+                label,
+                items,
+                enumeration_complete: true,
+            })
             .collect(),
     )
 }
@@ -392,14 +452,125 @@ pub(crate) fn collect_trash_report() -> Result<TrashReport, Box<dyn std::error::
     }))
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_report(inventory: &crate::macos_trash::inventory::Inventory) -> TrashReport {
+    let mut report = TrashReport::new(
+        inventory
+            .groups
+            .iter()
+            .map(|group| TrashGroupReport {
+                label: format!("{:?}", group.path),
+                enumeration_complete: group.complete,
+                items: group
+                    .items
+                    .iter()
+                    .map(|item| TrashItemReport {
+                        original_path: item.path.clone(),
+                        actual_path: true,
+                        hint: item.hint.as_ref().map(|hint| {
+                            crate::macos_trash::ds_store::PutBack {
+                                name: hint.name.clone(),
+                                location: hint.location.clone(),
+                            }
+                        }),
+                        size: if item.size_complete {
+                            ReportedSize::Exact(item.bytes)
+                        } else {
+                            ReportedSize::Partial(item.bytes)
+                        },
+                    })
+                    .collect(),
+            })
+            .collect(),
+    );
+    report.enumeration_complete = inventory.discovery_complete;
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_partial_reports_keep_known_bytes_and_mark_unknown_counts() {
+        use crate::macos_trash::inventory::{Group, Inventory, Issue, Item};
+        let mut inventory = Inventory {
+            groups: vec![Group {
+                path: PathBuf::from("/Trash"),
+                items: vec![Item {
+                    path: PathBuf::from("/Trash/directory"),
+                    bytes: 4096,
+                    size_complete: false,
+                    hint: None,
+                }],
+                complete: true,
+            }],
+            issues: vec![Issue {
+                path: PathBuf::from("/Trash/directory/denied"),
+                error: io::Error::from_raw_os_error(libc::EACCES),
+            }],
+            discovery_complete: true,
+        };
+        let output = render(&macos_report(&inventory), true, "Total").unwrap();
+        assert!(output.contains("Total: 1 item(s), at least 4.0 KiB (incomplete)"));
+        assert!(output.contains("at least 4.0 KiB (incomplete)  \"/Trash/directory\""));
+        inventory.groups[0].complete = false;
+        let output = render(&macos_report(&inventory), false, "Total").unwrap();
+        assert!(output.contains("Total: at least 1 item(s), at least 4.0 KiB (incomplete)"));
+        assert!(!output.contains("original location"));
+        let mut errors = Vec::new();
+        assert!(inventory.finish(&mut errors).is_err());
+        inventory.groups.clear();
+        inventory.discovery_complete = false;
+        let output = render(&macos_report(&inventory), false, "Total").unwrap();
+        assert!(output.contains("Total: at least 0 item(s), at least 0 B (incomplete)"));
+        assert!(!output.contains("No trash directories found"));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_verbose_stats_escape_paths_and_label_hints() {
+        use crate::macos_trash::{
+            ds_store::PutBack,
+            inventory::{Group, Inventory, Item},
+        };
+        let inventory = Inventory {
+            groups: vec![Group {
+                path: PathBuf::from("/Trash"),
+                complete: true,
+                items: vec![Item {
+                    path: PathBuf::from("/Trash/snow 雪\n\u{1b}"),
+                    bytes: 2048,
+                    size_complete: true,
+                    hint: Some(PutBack {
+                        name: Some("original\nname".into()),
+                        location: Some("folder/".into()),
+                    }),
+                }],
+            }],
+            issues: Vec::new(),
+            discovery_complete: true,
+        };
+        let report = macos_report(&inventory);
+        let output = render(&report, true, "Total").unwrap();
+        assert!(output.contains("recorded folder (unverified): \"folder/\""));
+        assert!(output.contains("recorded name (unverified): \"original\\nname\""));
+        assert!(!output.contains('\u{1b}'));
+        assert!(output.contains("Total: 1 item(s), 2.0 KiB"));
+        let output = render(&report, false, "Total").unwrap();
+        assert!(!output.contains("recorded folder"));
+        assert!(!output.contains("snow"));
+    }
 
     fn item(path: &str, size: ReportedSize) -> TrashItemReport {
         TrashItemReport {
             original_path: PathBuf::from(path),
             size,
+            #[cfg(target_os = "macos")]
+            actual_path: false,
+            #[cfg(target_os = "macos")]
+            hint: None,
         }
     }
 
@@ -407,6 +578,7 @@ mod tests {
         TrashGroupReport {
             label: label.to_owned(),
             items,
+            enumeration_complete: true,
         }
     }
 

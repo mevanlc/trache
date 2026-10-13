@@ -3,6 +3,7 @@ mod interact;
 mod macos_trash;
 #[cfg(any(
     target_os = "windows",
+    target_os = "macos",
     all(unix, not(target_os = "macos"), not(target_os = "ios"))
 ))]
 mod trash_report;
@@ -194,7 +195,10 @@ use trash::os_limited::{list, purge_all, restore_all};
 ))]
 struct Cli {
     /// List items in trash
-    #[arg(long = "trash-list")]
+    #[arg(
+        long = "trash-list",
+        long_help = "List items in trash.\n\nOn macOS, list actual Trash paths with unverified recorded folder/name hints when available. No deletion timestamps are inferred. Incomplete scans print accessible results and exit nonzero."
+    )]
     list: bool,
 
     /// Empty the entire trash
@@ -206,7 +210,10 @@ struct Cli {
         long = "trash-stats",
         long_help = "Show trash item counts and apparent sizes; -v lists items.\n\n\
             On Windows, top-level file sizes are exact. Directories and metadata failures make \
-            affected group and overall byte totals explicit lower bounds."
+            affected group and overall byte totals explicit lower bounds.\n\n\
+            On macOS, recursively measure logical sizes without following symlinks. \
+            Incomplete scans print accessible results and lower bounds, then exit nonzero. \
+            Verbose output includes actual Trash paths and unverified original-location hints."
     )]
     stats: bool,
 
@@ -773,7 +780,19 @@ fn list_trash() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(target_os = "macos")]
+fn list_trash() -> Result<(), Box<dyn std::error::Error>> {
+    use macos_trash::inventory::{Options, collect};
+    let inventory = collect(Options {
+        measure: false,
+        hints: true,
+    });
+    inventory.write_list(&mut io::stdout().lock())?;
+    inventory.finish(&mut io::stderr().lock())?;
+    Ok(())
+}
+
+#[cfg(target_os = "ios")]
 fn list_trash() -> Result<(), Box<dyn std::error::Error>> {
     Err("Listing trash is not supported on this platform".into())
 }
@@ -1269,7 +1288,20 @@ fn trash_stats(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(target_os = "macos")]
+fn trash_stats(verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use macos_trash::inventory::{Options, collect};
+    let inventory = collect(Options {
+        measure: true,
+        hints: verbose,
+    });
+    let report = trash_report::macos_report(&inventory);
+    trash_report::print_trash_report(&report, verbose, "Total")?;
+    inventory.finish(&mut io::stderr().lock())?;
+    Ok(())
+}
+
+#[cfg(target_os = "ios")]
 fn trash_stats(_verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     Err("Trash statistics are not supported on this platform".into())
 }

@@ -77,8 +77,26 @@ checks for up to ten seconds after finishing its work. Put Back remains best eff
 missing or unreadable metadata does not change the command's exit status. If the
 helper cannot start, trache performs the work and wait in the foreground.
 
-Restoration through trache's `--trash-undo` is still unsupported on macOS. Finder's
-Put Back is separate from that command.
+On macOS, `--trash-list` and `--trash-stats` inspect the current user's home Trash
+and per-user Trash directories on mounted volumes without creating directories,
+changing `.DS_Store`, or invoking Finder. Listing shows actual Trash paths; verbose
+statistics show these paths too. Available recorded folders and names are labeled
+**unverified**: stale Put Back records can belong to a previous file with the same
+Trash name. Missing or unreadable records show an unknown original location and
+do not hide items or fail the command. Recorded folders may be relative to a volume;
+trache preserves them as recorded and does not infer deletion timestamps.
+
+macOS statistics count top-level items and recursively sum logical sizes without
+following symlinks or crossing into another filesystem. Hard links count once per
+directory entry; totals are not estimates of reclaimable disk space. Root-level
+`.DS_Store` and `.localized` are excluded, while other hidden payloads are included.
+Results are a best-effort scan, not an atomic snapshot. Incomplete scans print
+accessible results and explicit lower bounds, report affected paths, and exit
+nonzero. Reading Trash may require Full Disk Access for the terminal or invoking app.
+
+Restoration through `--trash-undo` and selective deletion through `--trash-purge`
+remain unsupported on macOS. `--trash-empty` delegates to Finder; Finder's Put Back
+is separate from trache's undo command.
 
 On Windows, `--trash-stats` and `--trash-empty --trash-dry-run` report exact sizes for top-level
 files. Directory sizes are not recursively measured yet, so groups containing directories or
