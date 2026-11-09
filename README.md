@@ -69,6 +69,10 @@ Options:
 
 # Limitations
 
+On macOS, trache asks Foundation to initialize the current user's Trash on a volume
+when needed. If the volume cannot provide a usable Trash, the operation fails,
+including with `-f`.
+
 On macOS, trache keeps a temporary copy of itself running after trashing files so
 Apple's delayed Finder **Put Back** metadata can finish writing. Your prompt returns
 as soon as the moves finish. The helper reads the actual Trash directories' `.DS_Store`

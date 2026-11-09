@@ -286,14 +286,14 @@ struct Volume {
 }
 
 impl Volume {
-    fn new() -> Self {
+    fn new(filesystem: &str) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let image = temp.path().join("test.dmg");
         let mount = temp.path().join("mount");
         fs::create_dir(&mount).unwrap();
         assert!(
             Command::new("hdiutil")
-                .args(["create", "-quiet", "-size", "32m", "-fs", "HFS+"])
+                .args(["create", "-quiet", "-size", "128m", "-fs", filesystem])
                 .arg(&image)
                 .status()
                 .unwrap()
@@ -327,10 +327,92 @@ impl Drop for Volume {
 }
 
 #[test]
+fn initializes_fresh_volume_trash_for_a_regular_file() {
+    for filesystem in ["HFS+", "Case-sensitive APFS"] {
+        let volume = Volume::new(filesystem);
+        assert!(!volume.mount.join(".Trashes").try_exists().unwrap());
+        let source = volume.mount.join("first-file.txt");
+        fs::write(&source, "first file on this volume").unwrap();
+
+        let output = trache().arg(&source).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{filesystem}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!source.try_exists().unwrap());
+        let destination = volume
+            .mount
+            .join(".Trashes")
+            .join(unsafe { libc::getuid() }.to_string())
+            .join("first-file.txt");
+        assert_eq!(
+            fs::read_to_string(destination).unwrap(),
+            "first file on this volume"
+        );
+    }
+}
+
+#[test]
+fn initializes_fresh_volume_trash_for_a_dangling_symlink() {
+    for filesystem in ["HFS+", "Case-sensitive APFS"] {
+        let volume = Volume::new(filesystem);
+        assert!(!volume.mount.join(".Trashes").try_exists().unwrap());
+        let source = volume.mount.join("first-link");
+        let target = volume._temp.path().join("missing-target");
+        std::os::unix::fs::symlink(&target, &source).unwrap();
+
+        let output = trache().arg(&source).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{filesystem}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::symlink_metadata(&source).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        let destination = volume
+            .mount
+            .join(".Trashes")
+            .join(unsafe { libc::getuid() }.to_string())
+            .join("first-link");
+        assert_eq!(fs::read_link(destination).unwrap(), target);
+        assert!(!target.try_exists().unwrap());
+    }
+}
+
+#[test]
+fn unusable_volume_trash_is_not_bypassed_by_a_symlink_to_another_volume() {
+    use std::os::unix::fs::MetadataExt;
+
+    let volume = Volume::new("Case-sensitive APFS");
+    fs::write(volume.mount.join(".Trashes"), "blocked Trash").unwrap();
+    let target = volume._temp.path().join("target-directory");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("file.txt"), "keep this file").unwrap();
+    assert_ne!(
+        fs::metadata(&target).unwrap().dev(),
+        fs::metadata(&volume.mount).unwrap().dev()
+    );
+    let source = volume.mount.join("directory-link");
+    std::os::unix::fs::symlink(&target, &source).unwrap();
+
+    let output = trache().arg("-f").arg(&source).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("usable Trash"));
+    assert_eq!(fs::read_link(&source).unwrap(), target);
+    assert_eq!(
+        fs::read_to_string(target.join("file.txt")).unwrap(),
+        "keep this file"
+    );
+}
+
+#[test]
 fn one_helper_handles_home_and_mounted_volume_with_binary_names_and_symlinks() {
     use std::os::unix::ffi::OsStringExt;
     let files = Files::new();
-    let volume = Volume::new();
+    let volume = Volume::new("HFS+");
     let home_file = files.file("home.txt");
     let directory = volume.mount.join(format!("{}directory", files.prefix));
     fs::create_dir(&directory).unwrap();

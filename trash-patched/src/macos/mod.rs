@@ -220,7 +220,17 @@ fn file_url_for_path(path: &Path) -> Result<Retained<NSURL>, Error> {
 }
 
 fn trash_availability_check_path(path: &Path) -> &Path {
-    let mut candidate = path;
+    // Foundation can fail to initialize a volume's Trash with ENOTDIR when given a
+    // file URL. Use a directory without following symlinks onto another volume.
+    // Keep real directory targets themselves, including volume roots.
+    let mut candidate = if path
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.is_dir())
+    {
+        path
+    } else {
+        path.parent().unwrap_or(Path::new("/"))
+    };
     loop {
         if std::str::from_utf8(candidate.as_os_str().as_encoded_bytes()).is_ok() {
             return candidate;
